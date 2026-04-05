@@ -92,7 +92,7 @@ def _build_corrections(
         {
             "original": original,
             "corrected": corrected,
-            "explanation": explanation,
+            "explanation": explanation or "Grammar and phrasing adjusted while preserving your meaning.",
         }
     ]
 
@@ -417,7 +417,12 @@ class FreeChatService:
             and not self._theme_tracker.get("checkpoint_active", False)
         ):
             original = raw_user_message  # use unmodified input — not the tip-appended version
-            final_corrected, correction_explanation = await self._grammar_correct(original)
+            grammar_result = await self._grammar_correct(original)
+            if isinstance(grammar_result, tuple):
+                final_corrected, correction_explanation = grammar_result
+            else:
+                final_corrected = grammar_result
+                correction_explanation = ""
 
             if (
                 final_corrected
@@ -427,6 +432,7 @@ class FreeChatService:
                 and not re.search(r'[a-ząćęłńóśźż][A-ZĄĆĘŁŃÓŚŹŻ]', final_corrected)
             ):
                 corrections = _build_corrections(original, final_corrected, correction_explanation)
+                response_text = f"{final_corrected}\n\n{response_text}"
                 correction_already_handled = True
 
         if not self._session_vocab_active and not self._theme_tracker["checkpoint_done"]:
