@@ -1,0 +1,1409 @@
+{% extends "base.html" %}
+
+{% block title %}Free Chat - Word App{% endblock %}
+
+{% block content %}
+<div class="chat-header">
+    <span class="chat-header-title">AI Practice</span>
+    <span id="chat-status-line" class="chat-header-status hidden"></span>
+</div>
+
+<div class="chat-controls">
+    <label for="theme-select">Theme</label>
+    <select id="theme-select">
+        <option value="">All Themes</option>
+        <option value="core_communication">Core Communication</option>
+        <option value="work_services">Work Services</option>
+        <option value="food">Food</option>
+        <option value="family_social">Family Social</option>
+        <option value="time_planning">Time Planning</option>
+        <option value="city_mobility">City Mobility</option>
+        <option value="appearance_health">Appearance Health</option>
+    </select>
+    <span class="chat-controls-sep">·</span>
+    <label for="scenario-select">Scenario</label>
+    <select id="scenario-select">
+        <option value="free">Free conversation</option>
+        <option value="restaurant">Restaurant</option>
+        <option value="hotel">Hotel</option>
+        <option value="doctor">Doctor</option>
+        <option value="job_interview">Job interview</option>
+    </select>
+    <span class="chat-controls-sep">·</span>
+    <label>
+        <input type="checkbox" id="corrections-toggle">
+        Corrections
+    </label>
+</div>
+
+<div class="chat-container">
+    <div id="session-vocab-banner" class="session-vocab-banner hidden">
+        <div class="session-vocab-banner-row">
+            <span>Session loaded: <strong id="session-vocab-count"></strong> words from your study session</span>
+            <button id="change-approach-btn" class="banner-change-approach">Change approach →</button>
+            <button id="session-vocab-toggle" class="banner-toggle" aria-label="Show words">▾</button>
+            <button id="session-vocab-dismiss" class="banner-dismiss" aria-label="Dismiss">×</button>
+        </div>
+        <div id="session-vocab-list" class="session-vocab-list hidden"></div>
+    </div>
+    <div class="chat-messages" id="chat-messages">
+        <div class="chat-message assistant">
+            <div class="role">Assistant</div>
+            <div class="content">Hello! I'm here to help you learn Polish. Ask me anything about vocabulary, grammar, pronunciation, or culture.</div>
+        </div>
+    </div>
+
+    <div class="prompt-chips" id="prompt-chips"></div>
+
+    <div class="chat-input">
+        <textarea id="user-input" placeholder="Type your message..." rows="2"></textarea>
+        <button id="send-btn" onclick="sendMessage()">Send</button>
+    </div>
+</div>
+
+<div class="mt-1">
+    <button onclick="clearChat()" class="btn btn-secondary">Clear Chat</button>
+</div>
+
+{% if not ai_available %}
+<div class="message warning mt-2">
+    <strong>AI Unavailable:</strong> {{ ai_error or 'Ollama is not running. Start Ollama to enable chat.' }}
+</div>
+{% endif %}
+{% endblock %}
+
+{% block head %}
+<script src="https://cdn.jsdelivr.net/npm/marked@15/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3/dist/purify.min.js"></script>
+<style>
+.chat-message .content p:first-child { margin-top: 0; }
+.chat-message .content p:last-child  { margin-bottom: 0; }
+.chat-message .content p             { margin: 0.4em 0; }
+
+.chat-message .content ul,
+.chat-message .content ol {
+    margin: 0.4em 0;
+    padding-left: 1.4em;
+}
+
+.chat-message .content code {
+    background: #e8e8e4;
+    padding: 0.15em 0.35em;
+    border-radius: 3px;
+    font-size: 0.9em;
+}
+
+.chat-message .content pre {
+    background: #2c2c2c;
+    color: #f0f0f0;
+    padding: 0.75em 1em;
+    border-radius: 4px;
+    overflow-x: auto;
+    margin: 0.5em 0;
+}
+
+.chat-message .content pre code {
+    background: none;
+    padding: 0;
+    color: inherit;
+    font-size: 0.88em;
+}
+
+.chat-message .content blockquote {
+    border-left: 3px solid #ccc;
+    margin: 0.4em 0;
+    padding: 0.2em 0.8em;
+    color: #666;
+}
+
+.prompt-chips {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    padding: 0.75rem 0;
+}
+
+.prompt-chip {
+    padding: 0.4rem 0.85rem;
+    font-size: 0.85rem;
+    font-family: Georgia, 'Times New Roman', serif;
+    background: #fff;
+    color: #555;
+    border: 1px solid #d0d0d0;
+    border-radius: 1rem;
+    cursor: pointer;
+    transition: background 0.15s, border-color 0.15s;
+    line-height: 1.4;
+}
+
+.prompt-chip:hover {
+    background: #f3e5f5;
+    border-color: #7b1fa2;
+    color: #7b1fa2;
+}
+
+
+.corrections-block {
+    margin-top: 8px;
+    padding: 8px;
+    background: #f8f8f8;
+    border-left: 3px solid #ff9800;
+    font-size: 0.9em;
+}
+.retry-btn {
+    margin-top: 6px;
+    padding: 4px 8px;
+    font-size: 0.85em;
+    cursor: pointer;
+}
+
+/* Spinner */
+.spinner {
+    width: 18px;
+    height: 18px;
+    border: 3px solid rgba(0, 0, 0, 0.15);
+    border-top: 3px solid #4a90e2;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+    margin-left: 8px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+.chat-message.loading .content {
+    display: flex;
+    align-items: center;
+}
+
+.success-pop {
+    animation: feedbackPop 0.4s ease-out;
+}
+
+@keyframes feedbackPop {
+    0%   { opacity: 0; transform: translateY(6px) scale(0.97); }
+    60%  { opacity: 1; transform: translateY(-2px) scale(1.01); }
+    100% { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+/* Correction block fade-in */
+.correction-fade {
+    opacity: 0;
+    transform: translateY(6px);
+    animation: correctionFadeIn 0.3s ease-out forwards;
+}
+
+@keyframes correctionFadeIn {
+    to {
+        opacity: 1;
+        transform: translateY(0);
+    }
+}
+
+.correction-old {
+    display: block;
+    color: #999;
+    text-decoration: line-through;
+    margin-top: 4px;
+}
+
+.correction-new {
+    display: block;
+    color: #2e7d32;
+    font-weight: 600;
+    margin-bottom: 4px;
+}
+
+.correction-explanation {
+    display: block;
+    font-size: 0.8em;
+    color: #777;
+    margin-bottom: 6px;
+    white-space: pre-line;
+}
+</style>
+{% endblock head %}
+
+{% block scripts %}
+<script>
+const messagesDiv = document.getElementById('chat-messages');
+const userInput = document.getElementById('user-input');
+const sendBtn = document.getElementById('send-btn');
+const themeSelect = document.getElementById("theme-select");
+const scenarioSelect = document.getElementById("scenario-select");
+
+window._isRetryMode = false;
+window._retryResolved = false;
+window.currentTheme = null;
+
+// Word capture state
+const DEBUG_WORD_CAPTURE = false;
+let knownTokens = new Set();
+let knownTokensLoaded = false;
+let activeTooltip = null;
+const translationCache = new Map();
+
+// Study → Chat handoff state
+let sessionVocab = [];
+let sessionPromptInjected = false;
+
+(function consumeSessionVocab() {
+    const raw = sessionStorage.getItem("chat_vocab");
+    // NOT removed here — persists for refresh/navigation. Cleared only on "Clear chat".
+    if (!raw) return;
+    try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) {
+            sessionVocab = parsed;
+        }
+    } catch (e) {
+        sessionVocab = [];
+    }
+})();
+
+function normalizeToken(t) {
+    return t.normalize("NFC").toLowerCase().trim();
+}
+
+async function loadKnownTokens() {
+    try {
+        const data = await fetch("/api/vocabulary/known-tokens").then(r => r.json());
+        knownTokens = new Set(data.tokens);
+        knownTokensLoaded = true;
+        if (DEBUG_WORD_CAPTURE) console.log("Known tokens loaded:", knownTokens.size);
+        // Re-annotate messages already rendered before tokens finished loading
+        document.querySelectorAll('.chat-message.assistant .content')
+            .forEach(el => annotateUnknownWords(el));
+    } catch (err) {
+        console.error("loadKnownTokens failed:", err);
+    }
+}
+
+function annotateUnknownWords(contentEl) {
+    if (contentEl.dataset.annotated === "true") return;
+    if (!knownTokensLoaded) return;
+    contentEl.dataset.annotated = "true";
+
+    const walk = (node) => {
+        if (node.nodeType === Node.ELEMENT_NODE) {
+            // Skip already-wrapped spans and code blocks
+            if (node.classList.contains('unknown-word')) return;
+            if (node.tagName === 'CODE' || node.tagName === 'PRE') return;
+            Array.from(node.childNodes).forEach(walk);
+            return;
+        }
+        if (node.nodeType !== Node.TEXT_NODE) return;
+        if (node.parentElement?.classList.contains('unknown-word')) return;
+
+        const original = node.textContent;
+        const matches = [...original.matchAll(/\p{L}+/gu)];
+        if (!matches.length) return;
+
+        const fragment = document.createDocumentFragment();
+        let cursor = 0;
+
+        for (const match of matches) {
+            const start = match.index;
+            const end = start + match[0].length;
+            const token = match[0];
+
+            // Preserve text before this match
+            if (start > cursor) {
+                fragment.appendChild(document.createTextNode(original.slice(cursor, start)));
+            }
+
+            const normalized = normalizeToken(token);
+            if (
+                token.length >= 3 &&
+                !/^\d+$/.test(token) &&
+                !knownTokens.has(normalized)
+            ) {
+                if (DEBUG_WORD_CAPTURE) console.log("Unknown word:", token);
+                const span = document.createElement('span');
+                span.className = 'unknown-word';
+                span.dataset.word = normalized;
+                span.textContent = token;
+                fragment.appendChild(span);
+            } else {
+                fragment.appendChild(document.createTextNode(token));
+            }
+
+            cursor = end;
+        }
+
+        // Preserve tail
+        if (cursor < original.length) {
+            fragment.appendChild(document.createTextNode(original.slice(cursor)));
+        }
+
+        node.replaceWith(fragment);
+    };
+
+    Array.from(contentEl.childNodes).forEach(walk);
+}
+
+function dismissTooltip() {
+    if (activeTooltip) {
+        activeTooltip.remove();
+        activeTooltip = null;
+    }
+}
+
+function positionTooltip(tooltip, spanRect, containerRect) {
+    const tooltipWidth = tooltip.offsetWidth;
+    const tooltipHeight = tooltip.offsetHeight;
+
+    let x = spanRect.left - containerRect.left;
+    let y = spanRect.bottom - containerRect.top + messagesDiv.scrollTop + 4;
+
+    // Clamp X so tooltip doesn't overflow right edge
+    const maxX = containerRect.width - tooltipWidth - 10;
+    if (x > maxX) x = Math.max(0, maxX);
+
+    // Flip above if tooltip would overflow the visible bottom of the container
+    const visibleBottom = messagesDiv.scrollTop + messagesDiv.clientHeight;
+    if ((y - messagesDiv.scrollTop + tooltipHeight) > messagesDiv.clientHeight) {
+        y = spanRect.top - containerRect.top + messagesDiv.scrollTop - tooltipHeight - 4;
+    }
+
+    tooltip.style.left = x + "px";
+    tooltip.style.top = y + "px";
+}
+
+async function translateWord(word, targetLang) {
+    const cacheKey = `${word}::${targetLang}`;
+    if (translationCache.has(cacheKey)) return translationCache.get(cacheKey);
+    const res = await fetch("/api/ai/chat/translate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ text: word, source_language: "Polish", target_language: targetLang }),
+    });
+    if (!res.ok) throw new Error("translate failed");
+    const data = await res.json();
+    const translation = data.content?.trim() || "";
+    translationCache.set(cacheKey, translation);
+    return translation;
+}
+
+// Tooltip click handler (delegated on messagesDiv)
+document.addEventListener("DOMContentLoaded", () => {
+    messagesDiv.addEventListener("click", async (e) => {
+        const span = e.target.closest(".unknown-word");
+        if (!span || span.classList.contains("captured")) return;
+
+        const word = span.dataset.word;
+        // Use base form (lemma) for translation when clicking a session vocabulary word
+        const wordForTranslation = span.closest(".session-word")?.dataset.base || word;
+
+        // Flicker guard — same word fast-clicked
+        if (activeTooltip?.dataset.word === word) return;
+
+        dismissTooltip();
+
+        const tooltip = document.createElement("div");
+        tooltip.className = "word-tooltip";
+        tooltip.dataset.word = word;
+        tooltip.textContent = "Translating…";
+        messagesDiv.appendChild(tooltip);
+        activeTooltip = tooltip;
+
+        // Position after inserting so offsetWidth/Height are available
+        const spanRect = span.getBoundingClientRect();
+        const containerRect = messagesDiv.getBoundingClientRect();
+        positionTooltip(tooltip, spanRect, containerRect);
+
+        let ukTranslation = null;
+        let enTranslation = null;
+
+        try {
+            [ukTranslation, enTranslation] = await Promise.all([
+                translateWord(wordForTranslation, "Ukrainian"),
+                translateWord(wordForTranslation, "English"),
+            ]);
+            if (activeTooltip !== tooltip) return; // dismissed while translating
+
+            const displayText = [ukTranslation, enTranslation].filter(Boolean).join(" / ");
+
+            if (!displayText) {
+                tooltip.innerHTML = `Translation unavailable <button class="btn btn-secondary" style="font-size:0.8rem;padding:0.15rem 0.4rem;margin-left:0.5rem;">Dismiss</button>`;
+                tooltip.querySelector("button").addEventListener("click", dismissTooltip);
+            } else {
+                const saveBtn = document.createElement("button");
+                saveBtn.textContent = "Save word";
+                saveBtn.className = "btn btn-primary";
+                saveBtn.style.cssText = "font-size:0.8rem;padding:0.15rem 0.5rem;margin-left:0.75rem;";
+                const baseForm = span.closest(".session-word")?.dataset.base;
+                tooltip.textContent = (baseForm ? baseForm + " — " : "") + displayText + " ";
+                tooltip.appendChild(saveBtn);
+
+                const savedTranslation = [ukTranslation, enTranslation].filter(Boolean).join(" / ");
+
+                saveBtn.addEventListener("click", async () => {
+                    function showQuickAddMessage(msg) {
+                        tooltip.textContent = msg;
+                    }
+
+                    saveBtn.disabled = true;
+                    try {
+                        const payload = {
+                            text: span.closest(".session-word")?.dataset.base || word,
+                            translation: savedTranslation
+                        };
+                        const response = await fetch("/api/units/inbox", {
+                            method: "POST",
+                            headers: { "Content-Type": "application/json" },
+                            body: JSON.stringify(payload)
+                        });
+
+                        let data = null;
+                        try {
+                            data = await response.json();
+                        } catch (e) {
+                            data = null;
+                        }
+
+                        // DUPLICATE CASE
+                        if (response.status === 409 && data?.detail?.status === "exists") {
+                            document.querySelectorAll(`.unknown-word[data-word="${CSS.escape(word)}"]`)
+                                .forEach(el => el.classList.add("captured"));
+                            showQuickAddMessage(`✔ Already exists in: ${data.detail.vocabulary_name}`);
+                            setTimeout(dismissTooltip, 1500);
+                            return;
+                        }
+
+                        // ERROR CASE
+                        if (!response.ok) {
+                            showQuickAddMessage(data?.detail || "Error adding word");
+                            saveBtn.disabled = false;
+                            return;
+                        }
+
+                        // SUCCESS CASE
+                        document.querySelectorAll(`.unknown-word[data-word="${CSS.escape(word)}"]`)
+                            .forEach(el => el.classList.add("captured"));
+                        showQuickAddMessage("✔ Added to Inbox");
+                        setTimeout(dismissTooltip, 1500);
+                    } catch (_) {
+                        showQuickAddMessage("Save failed");
+                        saveBtn.disabled = false;
+                    }
+                });
+            }
+        } catch (_) {
+            if (activeTooltip !== tooltip) return;
+            tooltip.innerHTML = `Translation unavailable <button class="btn btn-secondary" style="font-size:0.8rem;padding:0.15rem 0.4rem;margin-left:0.5rem;">Dismiss</button>`;
+            tooltip.querySelector("button").addEventListener("click", dismissTooltip);
+        }
+
+        // Reposition after content change
+        positionTooltip(tooltip, spanRect, containerRect);
+    });
+
+    // Dismiss on outside click
+    document.addEventListener("click", (e) => {
+        if (activeTooltip && !activeTooltip.contains(e.target) && !e.target.closest(".unknown-word")) {
+            dismissTooltip();
+        }
+    });
+
+    // Dismiss on Escape
+    document.addEventListener("keydown", (e) => {
+        if (e.key === "Escape") dismissTooltip();
+    });
+});
+
+const THEME_SCENARIO_MAP = {
+    food: "restaurant",
+    city_mobility: "hotel",
+    appearance_health: "doctor",
+    work_services: "job_interview"
+};
+
+function normalizeTheme(value) {
+    if (!value || value === "all") return null;
+    return value.trim().toLowerCase();
+}
+
+async function buildThemeStarter(theme) {
+    try {
+        const response = await fetch(`/api/themes/${theme}/weak-words`);
+        const data = await response.json();
+        const words = data.words || [];
+        const word = words.length > 0 ? words[0] : null;
+
+        const patterns = {
+            food: word
+                ? `Dziś zamawiamy ${word}. Co zamawiasz?\n(Order food in a restaurant.)`
+                : `Zamawiamy coś w restauracji. Co zamawiasz?\n(Order food in a restaurant.)`,
+
+            city_mobility: word
+                ? `Szukasz drogi do ${word}. Gdzie idziesz?\n(Ask for directions.)`
+                : `Pytasz o drogę w mieście. Gdzie chcesz iść?\n(Ask for directions.)`,
+
+            appearance_health: word
+                ? `Boli mnie ${word}. Co się dzieje?\n(Describe a symptom.)`
+                : `Idziesz do lekarza. Co się dzieje?\n(Describe a symptom.)`,
+
+            work_services: `Masz rozmowę o pracę. Opowiedz o sobie.\n(Job interview practice.)`,
+            core_communication: `Przedstaw się. Kim jesteś?\n(Introduce yourself.)`,
+            family_social: `Opisz swoją rodzinę.\n(Talk about your family.)`,
+            time_planning: `Opisz swój dzień.\n(Describe your routine.)`
+        };
+
+        return patterns[theme] || null;
+    } catch {
+        return null;
+    }
+}
+
+// On page load
+function showSessionVocabBanner() {
+    if (sessionVocab.length === 0) return;
+    const banner = document.getElementById("session-vocab-banner");
+    const countEl = document.getElementById("session-vocab-count");
+    if (!banner || !countEl) return;
+    countEl.textContent = sessionVocab.length;
+    banner.classList.remove("hidden");
+
+    // Populate word list
+    const listEl = document.getElementById("session-vocab-list");
+    if (listEl) {
+        listEl.innerHTML = sessionVocab
+            .map(v => `<div class="session-vocab-item" data-vocab-word="${v.word.toLowerCase()}">${v.word}${v.translation ? ` — ${v.translation}` : ""}</div>`)
+            .join("");
+    }
+
+    // Toggle expand/collapse
+    let isExpanded = false;
+    const toggleBtn = document.getElementById("session-vocab-toggle");
+    if (toggleBtn && listEl) {
+        toggleBtn.addEventListener("click", () => {
+            const isHidden = listEl.classList.toggle("hidden");
+            isExpanded = !isHidden;
+            toggleBtn.textContent = isHidden ? "▾" : "▴";
+        });
+    }
+
+    const dismissBtn = document.getElementById("session-vocab-dismiss");
+    dismissBtn.addEventListener("click", () => banner.classList.add("hidden"));
+
+    const changeApproachBtn = document.getElementById("change-approach-btn");
+    if (changeApproachBtn) {
+        changeApproachBtn.addEventListener("click", () => {
+            renderChips();
+            document.getElementById('prompt-chips').style.display = '';
+            userInput.value = '';
+            userInput.focus();
+        });
+    }
+}
+
+function updateSessionVocabUsedWords(usedWords) {
+    const usedSet = new Set(usedWords.map(w => w.toLowerCase()));
+    document.querySelectorAll(".session-vocab-item[data-vocab-word]").forEach(el => {
+        const word = el.dataset.vocabWord;
+        if (usedSet.has(word)) {
+            el.classList.add("session-vocab-used");
+        }
+    });
+}
+
+function updateSessionVocabStatusLine() {
+    if (sessionVocab.length === 0) return;
+    // Only show vocab status when no theme is active (theme status takes priority)
+    if (window.currentTheme) return;
+    const statusLine = document.getElementById("chat-status-line");
+    if (!statusLine) return;
+    statusLine.textContent = `AI practice · ${sessionVocab.length} words`;
+    statusLine.classList.remove("hidden");
+}
+
+// Persist chat DOM across navigation.
+// Also store the vocab fingerprint so restore can detect session changes.
+window.addEventListener("pagehide", () => {
+    const html = messagesDiv?.innerHTML;
+    if (html) {
+        sessionStorage.setItem("chat_history_html", html);
+        sessionStorage.setItem("chat_vocab_fingerprint", getVocabFingerprint(sessionVocab));
+    }
+});
+
+document.addEventListener("DOMContentLoaded", () => {
+    // Restore chat history when returning from another page.
+    // Gate by vocab fingerprint — if vocab changed (new study session), discard old chat.
+    const savedHistory = sessionStorage.getItem("chat_history_html");
+    const savedFingerprint = sessionStorage.getItem("chat_vocab_fingerprint");
+    const currentFingerprint = getVocabFingerprint(sessionVocab);
+    if (savedHistory && savedFingerprint === currentFingerprint) {
+        messagesDiv.innerHTML = savedHistory;
+        if (sessionVocab.length > 0) {
+            // Re-annotate assistant messages with the current session vocab.
+            // Preferred path: re-run full pipeline from stored raw markdown (data-raw-content).
+            // Fallback: text-node walk for legacy bubbles without raw metadata.
+            messagesDiv.querySelectorAll(".chat-message.assistant").forEach(msg => {
+                const contentEl = msg.querySelector('.content');
+                if (!contentEl) return;
+                const raw = contentEl.dataset.rawContent;
+                if (raw) {
+                    const { masked, segments } = maskCodeSegments(raw);
+                    const annotated = annotateSessionWords(masked);
+                    const restored = restoreCodeSegments(annotated, segments);
+                    contentEl.innerHTML = renderMarkdown(restored);
+                } else {
+                    reAnnotateAssistantMessage(contentEl);
+                }
+            });
+        } else {
+            // No session vocab active — strip any stale session-word spans from previous sessions.
+            messagesDiv.querySelectorAll(".chat-message.assistant .session-word").forEach(span => {
+                span.replaceWith(document.createTextNode(span.textContent));
+            });
+        }
+        messagesDiv.lastElementChild?.scrollIntoView({ block: "end" });
+    } else if (savedHistory) {
+        // Fingerprint mismatch — vocab changed (new study session). Discard stale chat.
+        sessionStorage.removeItem("chat_history_html");
+        sessionStorage.removeItem("chat_vocab_fingerprint");
+    }
+
+    loadKnownTokens();
+    showSessionVocabBanner();
+    updateSessionVocabStatusLine();
+    renderChips();
+
+    const savedTheme = localStorage.getItem("ai_theme");
+    const manualScenario = localStorage.getItem("ai_scenario_manual");
+    const starterSent = sessionStorage.getItem("theme_starter_sent");
+
+    if (savedTheme) {
+        themeSelect.value = savedTheme;
+        window.currentTheme = normalizeTheme(savedTheme);
+
+        if (!manualScenario && scenarioSelect.value === "free") {
+            const mapped = THEME_SCENARIO_MAP[savedTheme];
+            if (mapped) {
+                scenarioSelect.value = mapped;
+            }
+        }
+
+        if (!starterSent) {
+            const normalized = normalizeTheme(savedTheme);
+            buildThemeStarter(normalized).then(starter => {
+                if (!starter) return;
+
+                const hasUserMessages = !!messagesDiv.querySelector(".chat-message.user");
+                if (hasUserMessages) return;
+
+                if (messagesDiv.children.length === 0) {
+                    addMessage("assistant", starter);
+                    sessionStorage.setItem("theme_starter_sent", "true");
+                    return;
+                }
+
+                if (messagesDiv.children.length === 1) {
+                    const firstContent = messagesDiv.querySelector(".chat-message.assistant .content");
+                    if (firstContent) {
+                        firstContent.innerHTML = renderMarkdown(starter);
+                        sessionStorage.setItem("theme_starter_sent", "true");
+                    }
+                }
+            });
+        }
+    }
+});
+
+// Theme change handler
+themeSelect.addEventListener("change", () => {
+    sessionStorage.removeItem("theme_starter_sent");
+    const selected = themeSelect.value;
+    window.currentTheme = normalizeTheme(selected);
+
+    if (selected) {
+        localStorage.setItem("ai_theme", selected);
+
+        if (scenarioSelect.value === "free") {
+            const mapped = THEME_SCENARIO_MAP[selected];
+            if (mapped) {
+                scenarioSelect.value = mapped;
+            }
+        }
+    } else {
+        localStorage.removeItem("ai_theme");
+        window.currentTheme = null;
+    }
+});
+
+// Detect manual scenario change
+scenarioSelect.addEventListener("change", () => {
+    localStorage.setItem("ai_scenario_manual", "true");
+});
+
+// Retry structure control
+window._retryAttempts = 0;
+window._retryMaxAttempts = 3;
+
+// Handle Enter key
+userInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+        e.preventDefault();
+        sendMessage();
+    }
+});
+
+// Prompt chips — context-aware rendering
+const DEFAULT_CHIPS = [
+    { label: "Practice conversation", prompt: "Let's practice conversation" },
+    { label: "Quiz me on grammar", prompt: "Quiz me on grammar" },
+    { label: "Explain Polish cases", prompt: "Explain Polish cases" },
+];
+
+// --- Chip rotation helpers ---
+
+function getVocabFingerprint(vocab) {
+    return vocab.map(v => v.word).sort().join('|');
+}
+
+function getRotationIndex(fingerprint, vocabLength) {
+    const key = `chat_chip_offset_${fingerprint}`;
+    let index = parseInt(sessionStorage.getItem(key) || '0', 10);
+    if (isNaN(index)) index = 0;
+    return index % vocabLength;
+}
+
+function advanceRotationIndex(fingerprint, vocabLength) {
+    const key = `chat_chip_offset_${fingerprint}`;
+    const next = (getRotationIndex(fingerprint, vocabLength) + 1) % vocabLength;
+    sessionStorage.setItem(key, String(next));
+}
+
+/** Returns a rotating subset of up to `size` vocab items.
+ *  Each call advances the stored index so repeated "Change approach" clicks
+ *  cycle through the vocab deterministically. Fingerprint key auto-invalidates
+ *  when vocab changes between study sessions. */
+function getRotatedSubset(vocab, size = 6) {
+    if (!vocab.length) return [];
+    const fingerprint = getVocabFingerprint(vocab);
+    const start = getRotationIndex(fingerprint, vocab.length);
+    const subset = [];
+    for (let i = 0; i < Math.min(size, vocab.length); i++) {
+        subset.push(vocab[(start + i) % vocab.length]);
+    }
+    advanceRotationIndex(fingerprint, vocab.length);
+    return subset;
+}
+
+function buildChipLabel(prefix, words, maxLen = 35) {
+    const full = prefix + words.join(', ');
+    return full.length > maxLen ? full.slice(0, maxLen - 1) + '…' : full;
+}
+
+/** Builds a chip prompt from a template function, trimming words one at a time
+ *  until the result fits within maxLen characters. */
+function buildChipPrompt(templateFn, words, maxLen = 250) {
+    let result = templateFn(words);
+    if (result.length <= maxLen) return result;
+    for (let n = words.length - 1; n > 0; n--) {
+        result = templateFn(words.slice(0, n));
+        if (result.length <= maxLen) return result;
+    }
+    return templateFn([words[0]]).slice(0, maxLen);
+}
+
+function buildSessionChips(vocab) {
+    const subset = getRotatedSubset(vocab, 6);
+    const words = subset.map(v => v.word);
+    return [
+        {
+            label:  buildChipLabel('Practice: ', words),
+            prompt: buildChipPrompt(w => `Let's practice using these words: ${w.join(', ')}`, words),
+        },
+        {
+            label:  buildChipLabel('Quiz: ', words),
+            prompt: buildChipPrompt(w => `Quiz me on these words: ${w.join(', ')}`, words),
+        },
+        {
+            label:  buildChipLabel('Story: ', words),
+            prompt: buildChipPrompt(w => `Write a short story using these words: ${w.join(', ')}`, words),
+        },
+    ];
+}
+
+function renderChips() {
+    const container = document.getElementById('prompt-chips');
+    const chips = (sessionVocab && sessionVocab.length > 0)
+        ? buildSessionChips(sessionVocab)
+        : DEFAULT_CHIPS;
+    container.innerHTML = chips.map(c =>
+        `<button type="button" class="prompt-chip" data-prompt="${c.prompt.replace(/"/g, '&quot;')}">${c.label}</button>`
+    ).join('');
+}
+
+document.getElementById('prompt-chips').addEventListener('click', (e) => {
+    const chip = e.target.closest('.prompt-chip');
+    if (!chip || sendBtn.disabled) return;
+    userInput.value = chip.dataset.prompt;
+    window._chipTriggered = true;
+    sendMessage();
+});
+
+// Retry correction button handler
+document.addEventListener("click", function(e) {
+    const btn = e.target.closest(".retry-btn");
+    if (!btn) return;
+
+    const userInput = document.getElementById("user-input");
+
+    userInput.value = "";
+    userInput.placeholder = "Type the corrected sentence...";
+
+    userInput.focus();
+
+    window._retryOriginal = btn.dataset.original;
+    window._expectedCorrection = btn.dataset.correct;
+    window._isRetryMode = true;
+    window._retryAttempts = 0;
+});
+
+async function validateRetry(original, corrected, attempt) {
+    try {
+        const response = await fetch("/api/ai/chat/validate-retry", {
+            method: "POST",
+            headers: {
+                "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+                original_sentence: original,
+                correct_sentence: corrected,
+                user_attempt: attempt,
+                attempt_number: window._retryAttempts,
+                theme: window.currentTheme || null,
+            }),
+        });
+
+        if (!response.ok) {
+            throw new Error("Validation request failed");
+        }
+
+        return await response.json();
+
+    } catch (error) {
+        console.error("Retry validation error:", error);
+        return {
+            is_correct: false,
+            feedback: "Validation error. Please try again."
+        };
+    }
+}
+
+async function recordRetryRevealed(attemptNumber) {
+    try {
+        await fetch("/api/ai/chat/retry-revealed", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                attempt_number: attemptNumber,
+                theme: window.currentTheme || null,
+            }),
+        });
+    } catch (error) {
+        console.error("Retry revealed analytics error:", error);
+    }
+}
+
+async function sendMessage(overrideMessage) {
+    const message = overrideMessage || userInput.value.trim();
+    if (!message) return;
+
+    document.getElementById('prompt-chips').style.display = 'none';
+
+    // Retry validation should ONLY trigger when user submits non-empty retry text
+    if (
+        window._isRetryMode === true &&
+        message &&
+        message.trim().length > 0
+    ) {
+
+        if (!window._expectedCorrection) {
+            clearRetryState();
+            return;
+        }
+
+        sendBtn.disabled = true;
+        userInput.disabled = true;
+
+        const validation = await validateRetry(
+            window._retryOriginal || "",
+            window._expectedCorrection,
+            message
+        );
+
+        if (validation.is_correct) {
+
+            const correctedSentence = message;
+
+            window._retryAttempts = 0;
+
+            addMessage("user", correctedSentence);
+            const successDiv = addMessage("assistant", "✅ Correct! Good job.");
+            successDiv.classList.add("success-pop");
+
+            clearRetryState();
+
+            await continueConversation(correctedSentence);
+
+            userInput.value = "";
+            userInput.placeholder = "Type your message...";
+            sendBtn.disabled = false;
+            userInput.disabled = false;
+            userInput.focus();
+            return;
+
+        } else {
+
+            window._retryAttempts += 1;
+
+            if (window._retryAttempts === 1) {
+                addMessage("assistant", "❌ Not quite. Try again.");
+            }
+
+            else if (window._retryAttempts === 2) {
+
+                try {
+
+                    const response = await fetch("/api/ai/chat/hint", {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({
+                            original: window._retryOriginal,
+                            correct: window._expectedCorrection,
+                            user_attempt: message,
+                            theme: window.currentTheme || null
+                        })
+                    });
+
+                    const data = await response.json();
+
+                    addMessage("assistant", "💡 " + (data.hint || "Think carefully about the structure."));
+
+                } catch (error) {
+
+                    addMessage("assistant", "💡 Think carefully about tense and structure.");
+                }
+            }
+
+            else if (window._retryAttempts >= window._retryMaxAttempts) {
+                await recordRetryRevealed(window._retryAttempts);
+                addMessage("assistant", "❌ Let's review the correct sentence:");
+                addMessage("assistant", window._expectedCorrection || "Correct answer unavailable.");
+                clearRetryState();
+            }
+        }
+
+        userInput.value = "";
+        userInput.placeholder = "Type your message...";
+        sendBtn.disabled = false;
+        userInput.disabled = false;
+        userInput.focus();
+        return; // IMPORTANT: prevent falling into normal chat flow
+    }
+
+    // If this is post-retry continuation, skip retry guard
+    if (window._retryResolved) {
+        window._retryResolved = false;
+    }
+
+    // Add user message to chat
+    addMessage('user', message);
+    userInput.value = '';
+    
+    // Disable input while waiting
+    sendBtn.disabled = true;
+    userInput.disabled = true;
+    
+    // Add loading indicator (Thinking + spinner)
+    const loadingId = 'loading-' + Date.now();
+    const loadingWrap = document.createElement('div');
+    loadingWrap.className = 'chat-message assistant loading';
+    loadingWrap.id = loadingId;
+    loadingWrap.innerHTML = `
+        <div class="role">Assistant</div>
+        <div class="content"></div>
+    `;
+    const contentEl = loadingWrap.querySelector('.content');
+    const textSpan = document.createElement('span');
+    textSpan.textContent = 'Thinking';
+    const spinner = document.createElement('div');
+    spinner.className = 'spinner';
+    contentEl.appendChild(textSpan);
+    contentEl.appendChild(spinner);
+    messagesDiv.appendChild(loadingWrap);
+    scrollToBottom();
+    
+    try {
+        const vocabPayload = (!sessionPromptInjected && sessionVocab.length > 0) ? sessionVocab : null;
+        if (vocabPayload) sessionPromptInjected = true;
+
+        const response = await fetch('/api/ai/chat/respond', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                message: message,
+                scenario: scenarioSelect.value,
+                corrections_enabled: document.getElementById("corrections-toggle").checked,
+                theme: window.currentTheme || null,
+                session_vocab: vocabPayload
+            })
+        });
+        
+        const data = await response.json();
+        
+        // Remove loading indicator
+        document.getElementById(loadingId)?.remove();
+        
+        if (response.ok) {
+            if (data.corrections && data.corrections.length > 0) {
+                // Correction present — show correction block only, no assistant bubble.
+                // Assistant continues the conversation after the user fixes their sentence.
+                renderCorrectionBlock(data.corrections, message);
+            } else {
+                addMessage("assistant", data.content);
+                window._expectedCorrection = null;
+                window._retryOriginal = null;
+                window._retryResolved = false;
+            }
+            updateChatStatusLine(data.progress);
+        } else {
+            addMessage('assistant', `Error: ${data.detail || 'Failed to get response'}`);
+        }
+    } catch (error) {
+        document.getElementById(loadingId)?.remove();
+        addMessage('assistant', `Error: ${error.message}`);
+    }
+    
+    sendBtn.disabled = false;
+    userInput.disabled = false;
+    userInput.focus();
+}
+
+async function continueConversation(userText) {
+    try {
+        const response = await fetch("/api/ai/chat/respond", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                message: userText,
+                scenario: scenarioSelect.value,
+                theme: window.currentTheme || null
+            })
+        });
+
+        const data = await response.json();
+
+        if (data.content) {
+            addMessage("assistant", data.content);
+            updateChatStatusLine(data.progress);
+        }
+    } catch (error) {
+        console.error("Auto-continue failed:", error);
+    }
+}
+
+function updateChatStatusLine(progress) {
+    if (!progress) return;
+    const statusLine = document.getElementById("chat-status-line");
+    if (!statusLine) return;
+
+    const used = progress.theme_used ?? 0;
+    const total = progress.theme_total ?? 0;
+    const msgs = progress.user_messages ?? 0;
+
+    // If session vocab is active, update the vocab status line instead of the theme line
+    if (!window.currentTheme && sessionVocab.length > 0) {
+        const vocabUsed = progress.session_vocab_used ?? 0;
+        const vocabTotal = progress.session_vocab_total ?? sessionVocab.length;
+        const msgs = progress.user_messages ?? 0;
+        statusLine.textContent = `${vocabUsed}/${vocabTotal} words · ${msgs} msg${msgs !== 1 ? "s" : ""}`;
+        statusLine.classList.remove("hidden");
+        updateSessionVocabUsedWords(progress.session_vocab_used_words || []);
+        return;
+    }
+
+    let checkpoint = "";
+    if (progress.checkpoint_done) {
+        checkpoint = ` · Checkpoint: Done (${progress.checkpoint_score ?? 0}/5)`;
+    } else if (progress.checkpoint_active) {
+        const idx = progress.checkpoint_index ?? 0;
+        checkpoint = ` · Checkpoint: ${Math.min(idx + 1, 5)}/5`;
+    }
+
+    statusLine.textContent = `${used}/${total} words · ${msgs} msg${msgs !== 1 ? "s" : ""}${checkpoint}`;
+    statusLine.classList.remove("hidden");
+}
+
+function renderCharacterDiff(original, corrected) {
+    if (!original || !corrected) return escapeHtml(corrected || "");
+
+    let result = "";
+    const maxLen = Math.max(original.length, corrected.length);
+
+    for (let i = 0; i < maxLen; i++) {
+        const oChar = original[i] || "";
+        const cChar = corrected[i] || "";
+        const oSafe = escapeHtml(oChar);
+        const cSafe = escapeHtml(cChar);
+
+        if (oChar === cChar) {
+            result += cSafe;
+        } else {
+            if (oChar) {
+                result += `<span class="diff-removed">${oSafe}</span>`;
+            }
+            if (cChar) {
+                result += `<span class="diff-added">${cSafe}</span>`;
+            }
+        }
+    }
+
+    return `<span class="diff-container">${result}</span>`;
+}
+
+/** Replace fenced (```...```) and inline (`...`) code segments with indexed null-byte
+ *  placeholders before annotation, then restore them unchanged after.
+ *  Index-based mapping: each placeholder \x00CODE_N\x00 maps to exactly one original
+ *  segment, so identical segments never collide on restore. */
+function maskCodeSegments(text) {
+    const segments = [];
+    // Fenced blocks first (must precede inline to avoid partial matching)
+    const masked = text
+        .replace(/```[\s\S]*?```/g, match => {
+            segments.push(match);
+            return `\x00CODE_${segments.length - 1}\x00`;
+        })
+        .replace(/`[^`\n]+`/g, match => {
+            segments.push(match);
+            return `\x00CODE_${segments.length - 1}\x00`;
+        });
+    return { masked, segments };
+}
+
+function restoreCodeSegments(text, segments) {
+    return text.replace(/\x00CODE_(\d+)\x00/g, (_, i) => segments[Number(i)]);
+}
+
+/** Annotates session vocab words in an already-rendered assistant .content element
+ *  using a text-node walk. Used as fallback when data-raw-content is unavailable
+ *  (legacy bubbles saved before Phase 2b). Reuses annotateSessionWords() for
+ *  identical matching logic including root-stripping. Skips code, pre, and spans. */
+function reAnnotateAssistantMessage(contentEl) {
+    if (sessionVocab.length === 0) return;
+    const walker = document.createTreeWalker(contentEl, NodeFilter.SHOW_TEXT, {
+        acceptNode(node) {
+            let p = node.parentElement;
+            while (p && p !== contentEl) {
+                const tag = p.tagName;
+                if (tag === 'CODE' || tag === 'PRE' || tag === 'SPAN') {
+                    return NodeFilter.FILTER_REJECT;
+                }
+                p = p.parentElement;
+            }
+            return NodeFilter.FILTER_ACCEPT;
+        }
+    });
+    const textNodes = [];
+    let node;
+    while ((node = walker.nextNode())) textNodes.push(node);
+    textNodes.forEach(textNode => {
+        const original = textNode.nodeValue;
+        const annotated = annotateSessionWords(original);
+        if (annotated === original) return;
+        const temp = document.createElement('span');
+        temp.innerHTML = annotated;
+        const frag = document.createDocumentFragment();
+        while (temp.firstChild) frag.appendChild(temp.firstChild);
+        textNode.parentNode.replaceChild(frag, textNode);
+    });
+}
+
+/** annotateSessionWords accepts either:
+ *  - raw markdown strings (assistant pipeline: before marked.parse)
+ *  - post-escapeHtml strings (user pipeline: after escapeHtml)
+ *  Regex substitution is safe in both contexts. */
+function annotateSessionWords(html) {
+    if (!sessionVocab || sessionVocab.length === 0) return html;
+    let result = html;
+    sessionVocab.forEach(item => {
+        const word = item.word;
+        if (!word || word.length < 3) return;
+        // Strip trailing vowel for Polish inflection coverage (okno→okn matches okna, oknie, oknem)
+        // Only strip if word is longer than 3 chars and ends in a vowel
+        const root = (word.length > 3 && /[aoeiuąęó]$/i.test(word))
+            ? word.slice(0, -1)
+            : word;
+        const escaped = root.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const regex = new RegExp(`(?<![\\p{L}])(${escaped}[\\p{L}]*)(?![\\p{L}])`, "giu");
+        const base = word.replace(/"/g, '&quot;');
+        const translation = (item.translation || '')
+            .trim()
+            .replace(/"/g, '&quot;')
+            .replace(/</g, '&lt;')
+            .replace(/>/g, '&gt;');
+        result = result.replace(regex, `<span class="session-word" data-base="${base}" data-translation="${translation}">$1</span>`);
+    });
+    return result;
+}
+
+/** Renders a correction block directly into messagesDiv — no assistant bubble wrapper.
+ *  Called when the backend returns corrections. The assistant speaks only after a
+ *  successful retry, keeping the learning loop clean: mistake → fix → continue. */
+function renderCorrectionBlock(corrections, originalUserMessage) {
+    document.querySelectorAll(".corrections-block").forEach(el => el.remove());
+    clearRetryState();
+
+    const messageText = originalUserMessage || "";
+    const fullCorrectedSentence = (
+        corrections.find(c => c.corrected)?.corrected || messageText
+    ).trim();
+
+    window._expectedCorrection = fullCorrectedSentence;
+    window._retryOriginal = messageText;
+    window._isRetryMode = true;
+    window._retryAttempts = 0;
+
+    const correctionBlock = document.createElement("div");
+    correctionBlock.classList.add("corrections-block", "correction-fade");
+
+    corrections.forEach(c => {
+        const item = document.createElement("div");
+        item.classList.add("correction-item");
+        const explanationHtml = c.explanation
+            ? `<span class="correction-explanation">${escapeHtml(c.explanation)}</span>`
+            : '';
+        item.innerHTML = `
+            <strong>Correction:</strong>
+            <span class="correction-old">${escapeHtml(c.original || '')}</span>
+            <span class="correction-new">${escapeHtml(c.corrected || '')}</span>
+            ${explanationHtml}
+            <button
+                class="retry-btn"
+                data-original="${escapeHtml(messageText).replace(/"/g, '&quot;')}"
+                data-correct="${escapeHtml(fullCorrectedSentence).replace(/"/g, '&quot;')}">
+                Try again
+            </button>
+        `;
+        correctionBlock.appendChild(item);
+    });
+
+    messagesDiv.appendChild(correctionBlock);
+    scrollToBottom();
+}
+
+function addMessage(role, content) {
+    const messageDiv = document.createElement('div');
+    messageDiv.className = `chat-message ${role}`;
+    let rendered;
+    if (role === 'assistant') {
+        if (sessionVocab.length > 0) {
+            // Pipeline: raw markdown → mask code → annotate → restore code → markdown → sanitize
+            // Annotate on the raw string (before marked.parse) so code segments are never wrapped.
+            const { masked, segments } = maskCodeSegments(content);
+            const annotated = annotateSessionWords(masked);
+            const restored = restoreCodeSegments(annotated, segments);
+            rendered = renderMarkdown(restored);
+        } else {
+            rendered = renderMarkdown(content);
+        }
+    } else {
+        rendered = escapeHtml(content);
+        if (sessionVocab.length > 0 && !window._chipTriggered) {
+            const { masked, segments } = maskCodeSegments(rendered);
+            const annotated = annotateSessionWords(masked);
+            rendered = restoreCodeSegments(annotated, segments);
+        }
+    }
+    window._chipTriggered = false;
+    const contentHtml = rendered && rendered.trim()
+        ? `<div class="content">${rendered}</div>`
+        : '';
+    messageDiv.innerHTML = `
+        <div class="role">${role === 'user' ? 'You' : 'Assistant'}</div>
+        ${contentHtml}
+    `;
+    // Store raw markdown so the restore path can re-run the full annotation pipeline.
+    // Must be set synchronously here — pagehide fires later and reads dataset directly.
+    if (role === 'assistant') {
+        const contentEl = messageDiv.querySelector('.content');
+        if (contentEl) contentEl.dataset.rawContent = content;
+    }
+
+
+    messagesDiv.appendChild(messageDiv);
+
+    if (role === 'assistant') {
+        const contentEl = messageDiv.querySelector('.content');
+        if (contentEl) annotateUnknownWords(contentEl);
+    }
+
+    scrollToBottom();
+    return messageDiv;
+}
+
+function scrollToBottom() {
+    messagesDiv.lastElementChild?.scrollIntoView({
+        behavior: "smooth",
+        block: "end"
+    });
+}
+
+function clearRetryState() {
+    window._retryAttempts = 0;
+    window._expectedCorrection = null;
+    window._retryOriginal = null;
+    window._isRetryMode = false;
+}
+
+async function clearChat() {
+    if (!confirm('Clear chat history?')) return;
+    
+    try {
+        await fetch('/api/ai/chat/clear', { method: 'POST' });
+        sessionStorage.removeItem("chat_history_html");
+        sessionStorage.removeItem("chat_vocab_fingerprint");
+        sessionStorage.removeItem("chat_vocab");
+        clearRetryState();
+        window._retryResolved = false;
+        userInput.placeholder = "Type your message...";
+
+        // Reset session vocab state
+        sessionVocab = [];
+        sessionPromptInjected = false;
+        document.getElementById("session-vocab-banner")?.classList.add("hidden");
+        const statusLine = document.getElementById("chat-status-line");
+        if (statusLine) statusLine.classList.add("hidden");
+
+        messagesDiv.innerHTML = `
+            <div class="chat-message assistant">
+                <div class="role">Assistant</div>
+                <div class="content">Chat cleared. How can I help you?</div>
+            </div>
+        `;
+    } catch (error) {
+        alert('Failed to clear chat: ' + error.message);
+    }
+}
+
+function renderMarkdown(text) {
+    // html: true — required so annotateSessionWords() spans pass through marked unchanged.
+    // DOMPurify sanitizes after, preserving allowed data-* attributes.
+    const raw = marked.parse(text, { breaks: true, html: true });
+    return DOMPurify.sanitize(raw, { ADD_ATTR: ['data-base', 'data-word', 'data-translation'] });
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML.replace(/\n/g, '<br>');
+}
+</script>
+{% endblock %}

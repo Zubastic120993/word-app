@@ -1,0 +1,237 @@
+{% extends "base.html" %}
+
+{% block title %}Vocabulary Management - Word App{% endblock %}
+
+{% block content %}
+<div class="vocabulary-page">
+    <div class="page-header vocabulary-header">
+        <h1>Vocabulary Management</h1>
+        <p class="text-muted">Manage vocabulary sources and keep your study set clean.</p>
+    </div>
+
+    {# ── INBOX — shown only when items are present ── #}
+    <section class="card vocab-section inbox-section" id="inbox-section" style="display:none;">
+        <div class="vocab-section-header">
+            <h2>Inbox <span class="inbox-count" id="inbox-count"></span></h2>
+            <p class="text-muted">Words from chat. Add them to your vocabulary or discard.</p>
+        </div>
+        <div id="inbox-status" class="message info hidden"></div>
+        <div id="inbox-list" class="inbox-list"></div>
+    </section>
+
+    <section class="card vocab-section">
+        <div class="vocab-section-header">
+            <h2>Add Vocabulary</h2>
+            <p class="text-muted">Insert a new item into a selected vocabulary or default user list.</p>
+        </div>
+        <div id="add-status" style="display:none; margin-top:10px;"></div>
+        <form id="add-word-form" onsubmit="addWord(event)" class="add-word-form">
+            <select id="add-vocab-group" class="vocab-filter" title="Select group first (optional)">
+                <option value="all">(All groups)</option>
+            </select>
+            <select id="vocabulary-select" class="vocab-filter" title="Select vocabulary (optional)">
+                <option value="">(Auto: Chat Vocabulary)</option>
+            </select>
+            <input type="text" id="new-text" placeholder="Polish word/phrase" required>
+            <input type="text" id="new-translation" placeholder="Translation" required>
+            <button type="submit" class="btn">Save word</button>
+        </form>
+    </section>
+
+    <section class="card vocab-section">
+        <div class="vocab-section-header">
+            <h2>Browse and Edit</h2>
+            <p class="text-muted">Search, filter, and update existing vocabulary entries.</p>
+        </div>
+        <div id="browse-status" class="message info hidden"></div>
+
+        <div class="vocab-controls">
+            <input type="text" id="vocab-search" placeholder="Search words or translations..." class="vocab-search">
+            <select id="vocab-group" class="vocab-filter">
+                <option value="all">All Groups</option>
+            </select>
+            <select id="vocab-source" class="vocab-filter">
+                <option value="all">All Vocabularies</option>
+            </select>
+            <select id="vocab-filter" class="vocab-filter">
+                <option value="all">All Levels</option>
+                <option value="weak">Weak (&lt;50%)</option>
+                <option value="learning">Learning (50-80%)</option>
+                <option value="learned">Learned (&gt;80%)</option>
+            </select>
+        </div>
+        <div id="vocab-active-filters" class="vocab-active-filters hidden"></div>
+        <div id="vocab-results-summary" class="vocab-results-summary text-muted">Loading results...</div>
+
+        <div id="vocab-list" class="vocab-list">
+            <p class="text-muted text-center">Loading vocabulary...</p>
+        </div>
+
+        <div id="vocab-pagination" class="vocab-pagination"></div>
+    </section>
+
+    {% if sources %}
+    <section class="card vocab-section source-cleanup-card">
+        <div class="vocab-section-header">
+            <h2>Source Cleanup</h2>
+            <p class="text-muted">Remove all imported units and progress tied to one source PDF.</p>
+        </div>
+        <div id="cleanup-status" class="message info hidden"></div>
+        <div class="source-files-controls">
+            <select id="source-files-select" class="vocab-filter" title="Select source to delete">
+                {% for source in sources|sort(attribute='name') %}
+                <option value="{{ source.name }}" data-count="{{ source.count }}">
+                    {{ source.name }} ({{ source.count }} units)
+                </option>
+                {% endfor %}
+            </select>
+            <button type="button" class="btn btn-danger" onclick="deleteSelectedPdf()">Delete Source</button>
+        </div>
+        <p class="text-muted source-cleanup-note">This action permanently deletes all related vocabulary and learning progress for the selected source.</p>
+    </section>
+    {% endif %}
+</div>
+
+<!-- Edit Modal -->
+<div id="edit-modal" class="modal hidden">
+    <div class="modal-content">
+        <h3>Edit Vocabulary</h3>
+        <div id="edit-status" class="message info hidden"></div>
+        <form id="edit-form" onsubmit="saveEdit(event)">
+            <input type="hidden" id="edit-unit-id">
+            <label for="edit-text">Text (Polish)</label>
+            <input type="text" id="edit-text" required>
+            <label for="edit-translation">Translation</label>
+            <input type="text" id="edit-translation" required>
+            
+            <!-- Pronunciation voice section -->
+            <div class="voice-section" id="voice-section" style="display: none;">
+                <label for="voice-select">Pronunciation voice</label>
+                <select id="voice-select" class="voice-select">
+                    <option value="">Loading voices...</option>
+                </select>
+                <div class="voice-actions">
+                    <button type="button" id="preview-voice-btn" onclick="previewVoice()" class="btn btn-secondary">Preview</button>
+                    <button type="button" id="use-voice-btn" onclick="useVoice()" class="btn">Use this voice</button>
+                </div>
+                <audio id="preview-audio" controls style="width: 100%; margin-top: 0.5rem; display: none;"></audio>
+            </div>
+            
+            <div class="modal-actions">
+                <button type="button" onclick="closeModal()" class="btn btn-secondary">Cancel</button>
+                <button type="submit" class="btn">Save</button>
+            </div>
+        </form>
+    </div>
+</div>
+
+{% endblock %}
+
+{% block scripts %}
+<script src="/static/vocabulary.js?v={{ cache_bust }}"></script>
+<script>
+(function () {
+    async function loadInbox() {
+        const section = document.getElementById('inbox-section');
+        const listEl = document.getElementById('inbox-list');
+        const countEl = document.getElementById('inbox-count');
+
+        const inboxRes = await fetch('/api/units/inbox');
+        if (!inboxRes.ok) return;
+
+        const units = await inboxRes.json();
+
+        if (!units.length) {
+            section.style.display = 'none';
+            return;
+        }
+
+        countEl.textContent = '(' + units.length + ')';
+        section.style.display = '';
+
+        listEl.innerHTML = units.map(u => `
+            <div class="inbox-row inbox-item" id="inbox-row-${u.id}">
+                <span class="inbox-word">${escapeHtml(u.text)}</span>
+                <span class="inbox-sep">—</span>
+                <span class="inbox-translation">${escapeHtml(u.translation)}</span>
+                <div class="inbox-actions">
+                    <button class="btn-add" onclick="addToVocabulary(${u.id}, this)">
+                        Add
+                    </button>
+                    <button class="btn btn-danger inbox-delete-btn"
+                            onclick="deleteInboxUnit(${u.id})">Delete</button>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    window.addToVocabulary = async function (unitId, btn) {
+        const DEFAULT_VOCAB_ID = 1; // adjust
+
+        const response = await fetch(`/api/units/${unitId}/move`, {
+            method: 'PUT',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ vocabulary_id: DEFAULT_VOCAB_ID })
+        });
+
+        if (!response.ok) {
+            alert("Error adding word");
+            return;
+        }
+
+        // visual feedback
+        if (btn) {
+            btn.textContent = "Added ✓";
+            btn.disabled = true;
+            btn.style.backgroundColor = "#66bb6a";
+        }
+
+        // animate row removal
+        const row = btn?.closest(".inbox-item");
+        if (row) {
+            row.classList.add("fade-out");
+
+            setTimeout(() => {
+                row.remove();
+
+                // update counter
+                const counter = document.querySelector("#inbox-count");
+                if (counter) {
+                    const current = parseInt(counter.textContent.replace(/\D/g, ''), 10) || 0;
+                    const next = Math.max(0, current - 1);
+                    counter.textContent = next ? '(' + next + ')' : '';
+                    if (!next) {
+                        const section = document.getElementById('inbox-section');
+                        if (section) section.style.display = 'none';
+                    }
+                }
+
+            }, 300);
+        }
+    };
+
+    window.deleteInboxUnit = async function (unitId) {
+        console.log("DELETE CLICKED", unitId);
+        console.log("DELETE REQUEST", unitId);
+        const res = await fetch('/api/units/' + unitId, { method: 'DELETE' });
+        console.log("DELETE RESPONSE STATUS:", res.status);
+        if (res.ok) {
+            document.getElementById('inbox-row-' + unitId).remove();
+            const remaining = document.querySelectorAll('.inbox-row').length;
+            document.getElementById('inbox-count').textContent = remaining ? '(' + remaining + ')' : '';
+            if (!remaining) document.getElementById('inbox-section').style.display = 'none';
+        } else {
+            setStatus('inbox-status', 'Delete failed.', 'error');
+        }
+    };
+
+    function escapeHtml(text) {
+        const d = document.createElement('div');
+        d.textContent = text;
+        return d.innerHTML;
+    }
+
+    loadInbox();
+})();
+</script>
+{% endblock %}

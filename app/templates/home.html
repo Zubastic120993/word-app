@@ -1,0 +1,301 @@
+{% extends "base.html" %}
+
+{% block title %}Word App — Learning Launchpad{% endblock %}
+
+{% block content %}
+
+{# ── Priority decision (server-side, single source of truth) ─── #}
+{# Keep focus priority independent from session_size. #}
+{% set FOCUS_THRESHOLD = 20 %}
+{% if snapshot.due_words_count >= FOCUS_THRESHOLD %}
+    {% set primary = "due" %}
+{% elif snapshot.weak_words_count >= FOCUS_THRESHOLD %}
+    {% set primary = "weak" %}
+{% else %}
+    {% set primary = "new" %}
+{% endif %}
+
+{# ─────────────────────────────────────────────────
+   SECTION 1 — TODAY
+   ───────────────────────────────────────────────── #}
+<section class="launchpad-today">
+    <h2 class="today-snapshot-heading">Today</h2>
+
+    {# Focus + Status — merged, no repetition #}
+    <div class="focus-status-block">
+        <div class="focus-status-action" id="focus-action-text"></div>
+        <div class="focus-recommendation" id="focus-recommendation-text"></div>
+        <div class="focus-status-metrics" id="learning-status-line" aria-live="polite"></div>
+    </div>
+
+    {# Single banner — urgency beats behavior reminder #}
+    {% if snapshot.due_words_count > snapshot.due_recall_urgent_threshold %}
+    <div class="backlog-warning">
+        You're behind — {{ snapshot.due_words_count }} words overdue.
+        <a href="/study?due_only=true" class="backlog-warning-link">Clear them now →</a>
+    </div>
+    {% elif snapshot.streak_broken_days >= 2 %}
+    <div class="streak-break-banner">
+        You lost a {{ snapshot.streak_broken_days }}-day streak. Start a session to build a new one.
+    </div>
+    {% endif %}
+
+    {# Quick Add — compact, low visual weight #}
+    <form id="quick-add-form" class="quick-add-form quick-add-compact" onsubmit="quickAdd(event)">
+        <input type="text" id="qa-text" placeholder="Word or phrase" autocomplete="off" required>
+        <input type="text" id="qa-translation" placeholder="Translation" autocomplete="off" required>
+        <button type="submit" class="btn btn-secondary quick-add-btn">+Add</button>
+    </form>
+    <div id="qa-status" class="quick-add-status hidden"></div>
+
+    <div class="today-divider"></div>
+
+    {# Primary card — exactly one #}
+    {% if primary == "due" %}
+    <div class="today-card today-card-due">
+        <div class="today-card-body">
+            <span class="today-indicator indicator-due">⏰ Review Due Words</span>
+            <p class="today-hint">{{ snapshot.due_words_count }} words · {{ snapshot.session_size }}-word session</p>
+        </div>
+        <a href="/study?due_only=true" class="btn btn-primary">Review Due Words</a>
+    </div>
+    {% elif primary == "weak" %}
+    <div class="today-card today-card-urgent">
+        <div class="today-card-body">
+            <span class="today-indicator indicator-weak">🔴 Practice Weak Words</span>
+            <p class="today-hint">{{ snapshot.weak_words_count }} words · {{ snapshot.session_size }}-word session</p>
+        </div>
+        <a href="/study?weak_only=true" class="btn btn-primary">Practice Weak Words</a>
+    </div>
+    {% elif primary == "new" %}
+    <div class="today-card today-card-lesson">
+        <div class="today-card-body">
+            <span class="today-indicator indicator-lesson">✨ Learn New Words</span>
+            <p class="today-hint">{{ snapshot.session_size }}-word session</p>
+        </div>
+        <a href="/study?new_words_focus=true" class="btn btn-primary">Learn New Words</a>
+    </div>
+    {% else %}
+    <div class="today-card today-card-lesson">
+        <div class="today-card-body">
+            <span class="today-indicator indicator-lesson">📘 Lesson {{ snapshot.current_lesson }}</span>
+            <p class="today-hint">
+                {{ snapshot.lesson_progress.percent }}% complete
+                ({{ snapshot.lesson_progress.introduced }}/{{ snapshot.lesson_progress.total }})
+            </p>
+            <div class="lesson-progress-bar">
+                <div class="lesson-progress-fill"
+                     style="width: {{ snapshot.lesson_progress.percent }}%;"></div>
+            </div>
+        </div>
+        <a href="/study?curriculum_mode=lesson" class="btn btn-primary">
+            Continue Lesson {{ snapshot.current_lesson }}
+        </a>
+    </div>
+    {% endif %}
+
+    {# Secondary actions — lightweight links, no competition with primary #}
+    <div class="more-actions">
+        <span class="more-label">More:</span>
+        <ul class="more-list">
+            {% if primary != "due" and snapshot.due_words_count > 0 %}
+            <li><a href="/study?due_only=true">Review due words ({{ snapshot.due_words_count }})</a></li>
+            {% endif %}
+            {% if primary != "weak" and snapshot.weak_words_count > 0 %}
+            <li><a href="/study?weak_only=true">Practice weak words ({{ snapshot.weak_words_count }})</a></li>
+            {% endif %}
+            {% if primary != "new" %}
+            <li><a href="/study?new_words_focus=true">Learn new words</a></li>
+            {% endif %}
+            {% if primary != "lesson" and primary != "new" %}
+            <li><a href="/study?curriculum_mode=lesson">Continue lesson {{ snapshot.current_lesson }}</a></li>
+            {% endif %}
+        </ul>
+    </div>
+</section>
+
+{# ─────────────────────────────────────────────────
+   SECTION 2 — PROGRESS + FORECAST
+   ───────────────────────────────────────────────── #}
+<section class="launchpad-momentum">
+    <div class="momentum-grid">
+        <div class="momentum-item">
+            <div class="momentum-summary">
+                <span class="momentum-icon">📚</span>
+                <span class="momentum-label">Total words:</span>
+                <span class="momentum-value">{{ snapshot.total_units }}</span>
+            </div>
+        </div>
+        <div class="momentum-item">
+            <div class="momentum-summary">
+                <span class="momentum-icon">🧠</span>
+                <span class="momentum-label">Learned:</span>
+                <span class="momentum-value">{{ snapshot.learned_units }}</span>
+            </div>
+        </div>
+        <div class="momentum-item">
+            <div class="momentum-summary">
+                <span class="momentum-icon">🏆</span>
+                <span class="momentum-label">Mastered:</span>
+                <span class="momentum-value">{{ snapshot.mastery_percent }}%</span>
+            </div>
+        </div>
+    </div>
+
+    <div class="momentum-bar">
+        <div class="momentum-bar-fill" style="width: {{ snapshot.mastery_percent }}%"></div>
+    </div>
+
+    {% if snapshot.review_forecast %}
+    {% set max_count = (snapshot.review_forecast | map(attribute='count') | max) or 1 %}
+    <div class="forecast-section">
+        <h3 class="forecast-heading">Review forecast — next 14 days</h3>
+        <div class="forecast-chart">
+            {% for day in snapshot.review_forecast %}
+            {% set raw_h = (day.count / max_count * 60) | round | int %}
+            {% set bar_h = raw_h if raw_h >= 2 else 2 %}
+            <div class="forecast-col">
+                <span class="forecast-count">{{ day.count if day.count > 0 else '' }}</span>
+                <div class="forecast-bar{% if loop.first %} forecast-bar-today{% endif %}{% if day.count == 0 %} forecast-bar-zero{% endif %}"
+                     style="height: {{ bar_h }}px;"></div>
+                <span class="forecast-label">{{ day.label }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+    {% endif %}
+
+    <a href="/progress" class="momentum-link">View Full Progress →</a>
+</section>
+
+{% endblock %}
+
+{% block scripts %}
+<script>
+function showQuickAddMessage(msg, variant = 'info') {
+    const el = document.getElementById('quick-add-status') || document.getElementById('qa-status');
+    if (el) {
+        el.textContent = msg;
+        el.style.display = 'block';
+        el.className = 'quick-add-status ' + variant;
+        el.classList.remove('hidden');
+        setTimeout(() => el.classList.add('hidden'), variant === 'error' ? 4000 : 3000);
+    }
+}
+
+async function quickAdd(event) {
+    event.preventDefault();
+    const text = document.getElementById('qa-text').value.trim();
+    const translation = document.getElementById('qa-translation').value.trim();
+
+    if (!text || !translation) return;
+
+    try {
+        const payload = { text, translation };
+        const response = await fetch('/api/units/inbox', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+        });
+
+        let data = null;
+        try {
+            data = await response.json();
+        } catch (e) {
+            data = null;
+        }
+
+        // DUPLICATE CASE
+        if (response.status === 409 && data?.detail?.status === 'exists') {
+            showQuickAddMessage(`✔ Already exists in: ${data.detail.vocabulary_name}`);
+            return;
+        }
+
+        // ERROR CASE
+        if (!response.ok) {
+            showQuickAddMessage(data?.detail || 'Error adding word', 'error');
+            return;
+        }
+
+        // SUCCESS CASE
+        document.getElementById('qa-text').value = '';
+        document.getElementById('qa-translation').value = '';
+        document.getElementById('qa-text').focus();
+        showQuickAddMessage('✔ Added to Inbox', 'success');
+    } catch {
+        showQuickAddMessage('Network error. Try again.', 'error');
+    }
+}
+</script>
+<script>
+window.__DUE_WORDS_COUNT__   = {{ snapshot.due_words_count | default(0) }};
+window.__WEAK_WORDS_COUNT__  = {{ snapshot.weak_words_count | default(0) }};
+window.__STREAK_DAYS__       = {{ snapshot.learning_streak_days | default(0) }};
+(function () {
+    var DAILY_GOAL_LS_KEY = 'dailyGoalProgressV1';
+    var DATE_KEY = 'dailyGoalDate';
+    var todayKey = new Date().toDateString();
+    var storedKey = localStorage.getItem(DATE_KEY);
+    var dailyProgress = { newWords: 0 };
+    if (storedKey !== todayKey) {
+        localStorage.setItem(DATE_KEY, todayKey);
+        try { localStorage.removeItem(DAILY_GOAL_LS_KEY); } catch (e) {}
+    } else {
+        try {
+            var raw = localStorage.getItem(DAILY_GOAL_LS_KEY);
+            if (raw) {
+                var p = JSON.parse(raw);
+                dailyProgress.newWords = typeof p.newWords === 'number' ? p.newWords : 0;
+            }
+        } catch (e) {}
+    }
+
+    var due      = window.__DUE_WORDS_COUNT__ || 0;
+    var weak     = window.__WEAK_WORDS_COUNT__ || 0;
+    var streak   = window.__STREAK_DAYS__ || 0;
+    var newToday = dailyProgress.newWords || 0;
+    var FOCUS_THRESHOLD = 20;
+    var dueUrgent      = {{ snapshot.due_recall_urgent_threshold | default(20) }};
+    var weakFollowUpMin = {{ snapshot.weak_follow_up_min | default(5) }};
+
+    // Focus action — matches server-side priority
+    var focusEl = document.getElementById('focus-action-text');
+    if (focusEl) {
+        if (due >= FOCUS_THRESHOLD) {
+            focusEl.textContent = `${due} overdue words · review now`;
+        } else if (weak >= FOCUS_THRESHOLD) {
+            focusEl.textContent = `${weak} weak words · practice now`;
+        } else {
+            focusEl.textContent = 'Learn new words · start now';
+        }
+    }
+
+    var recEl = document.getElementById('focus-recommendation-text');
+    if (recEl) {
+        if (due >= FOCUS_THRESHOLD) {
+            recEl.textContent = 'Recommended: review overdue words before they slip';
+        } else if (weak >= FOCUS_THRESHOLD) {
+            recEl.textContent = 'Recommended: reinforce weak words to build retention';
+        } else {
+            recEl.textContent = 'Recommended: add new words to grow your vocabulary';
+        }
+    }
+
+    // Status metrics line
+    function metricColor(value, target, inverse) {
+        var ok = inverse ? value >= target : value <= target;
+        return ok ? 'color: #2e7d32;' : 'color: #c62828;';
+    }
+
+    var statusEl = document.getElementById('learning-status-line');
+    if (statusEl) {
+        var streakPart = streak > 0 ? ' · <span>🔥 ' + streak + 'd</span>' : '';
+        statusEl.innerHTML =
+            '<span style="' + metricColor(due, 20) + '">Due ' + due + '/20</span>' +
+            ' · <span style="' + metricColor(weak, 20) + '">Weak ' + weak + '/20</span>' +
+            ' · <span style="' + metricColor(newToday, {{ max_new_per_day }}, true) + '">New today ' + newToday + '/{{ max_new_per_day }}</span>' +
+            streakPart;
+    }
+})();
+</script>
+{% endblock %}

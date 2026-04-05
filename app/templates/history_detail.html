@@ -1,0 +1,277 @@
+{% extends "base.html" %}
+
+{% block title %}Session {{ session.id }} - Word App{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Session {{ session.id }}</h1>
+    <p class="page-subtitle">
+        {{ session.date.strftime('%B %d, %Y at %H:%M') }} · 
+        <span class="mode-badge-small {{ session.mode }}">{{ session.mode|title }}</span> ·
+        <span class="status-badge {{ session.status }}">
+            {% if session.status == 'completed' %}Completed{% elif session.status == 'abandoned' %}Abandoned{% else %}Active{% endif %}
+        </span>
+    </p>
+</div>
+
+<!-- Summary Stats -->
+<div class="stats-grid">
+    <div class="stat-card">
+        <div class="number">{{ session.total_units }}</div>
+        <div class="label">Studied</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" style="color: #2e7d32;">{{ session.correct_count }}</div>
+        <div class="label">Correct</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" style="color: #f57c00;">{{ session.partial_count }}</div>
+        <div class="label">Almost</div>
+    </div>
+    <div class="stat-card">
+        <div class="number" style="color: #c62828;">{{ session.failed_count }}</div>
+        <div class="label">Wrong</div>
+    </div>
+</div>
+
+<h2>Units</h2>
+
+<div class="history-units">
+    {% for unit in session.units %}
+    <div class="history-unit-card {{ unit.result_class }}">
+        <div class="unit-result-indicator">
+            {% if unit.result == 'correct' %}
+            <span class="result-icon correct">✓</span>
+            {% elif unit.result == 'partial' %}
+            <span class="result-icon partial">≈</span>
+            {% elif unit.result == 'failed' %}
+            <span class="result-icon failed">✗</span>
+            {% else %}
+            <span class="result-icon unanswered">—</span>
+            {% endif %}
+        </div>
+        
+        <div class="unit-content">
+            <div class="unit-number">#{{ unit.position }}</div>
+            
+            <div class="unit-prompt">
+                {% if session.mode == 'recall' %}
+                {# In recall mode, user sees translation and types text #}
+                <div class="prompt-label">Translate:</div>
+                <div class="prompt-text">{{ unit.translation }}</div>
+                {% else %}
+                {# In passive mode, user sees text #}
+                <div class="prompt-label">Word/Phrase:</div>
+                <div class="prompt-text">{{ unit.text }}</div>
+                {% endif %}
+            </div>
+            
+            {% if unit.answered %}
+            <div class="unit-answer">
+                {% if session.mode == 'recall' %}
+                <div class="answer-row">
+                    <span class="answer-label">Your answer:</span>
+                    <span class="answer-text {% if unit.result == 'failed' %}wrong{% endif %}">{{ unit.user_input or '—' }}</span>
+                </div>
+                <div class="answer-row">
+                    <span class="answer-label">Correct:</span>
+                    <span class="answer-text correct-answer">{{ unit.text }}</span>
+                </div>
+                {% else %}
+                {# Passive mode: show if they marked it correct or not #}
+                <div class="answer-row">
+                    <span class="answer-label">Translation:</span>
+                    <span class="answer-text">{{ unit.translation }}</span>
+                </div>
+                <div class="answer-row">
+                    <span class="answer-label">Self-assessment:</span>
+                    <span class="answer-text">{{ 'Knew it' if unit.is_correct else 'Did not know' }}</span>
+                </div>
+                {% endif %}
+            </div>
+            {% else %}
+            <div class="unit-answer unanswered">
+                <span class="text-muted">Not answered</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+    {% endfor %}
+</div>
+
+<div class="mt-2 text-center">
+    <a href="/history" class="btn btn-secondary">← Back to History</a>
+</div>
+
+<style>
+/* History Detail Styles */
+.history-units {
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+}
+
+.history-unit-card {
+    display: flex;
+    gap: 1rem;
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 6px;
+    padding: 1rem;
+    border-left: 4px solid #e0e0e0;
+}
+
+.history-unit-card.correct {
+    border-left-color: #4caf50;
+    background: #fafdf9;
+}
+
+.history-unit-card.partial {
+    border-left-color: #ff9800;
+    background: #fffdf9;
+}
+
+.history-unit-card.failed {
+    border-left-color: #f44336;
+    background: #fefafa;
+}
+
+.unit-result-indicator {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    flex-shrink: 0;
+}
+
+.result-icon {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    font-size: 1rem;
+    font-weight: bold;
+}
+
+.result-icon.correct {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.result-icon.partial {
+    background: #fff8e1;
+    color: #f57c00;
+}
+
+.result-icon.failed {
+    background: #ffebee;
+    color: #c62828;
+}
+
+.result-icon.unanswered {
+    background: #f5f5f5;
+    color: #999;
+}
+
+.unit-content {
+    flex: 1;
+}
+
+.unit-number {
+    font-size: 0.75rem;
+    color: #888;
+    margin-bottom: 0.25rem;
+}
+
+.unit-prompt {
+    margin-bottom: 0.75rem;
+}
+
+.prompt-label {
+    font-size: 0.8rem;
+    color: #666;
+    margin-bottom: 0.15rem;
+}
+
+.prompt-text {
+    font-size: 1.1rem;
+    font-weight: 500;
+    color: #2c2c2c;
+}
+
+.unit-answer {
+    font-size: 0.9rem;
+    padding-top: 0.75rem;
+    border-top: 1px solid #eee;
+}
+
+.answer-row {
+    margin-bottom: 0.25rem;
+}
+
+.answer-label {
+    color: #666;
+    margin-right: 0.5rem;
+}
+
+.answer-text {
+    color: #2c2c2c;
+}
+
+.answer-text.wrong {
+    color: #c62828;
+    text-decoration: line-through;
+}
+
+.answer-text.correct-answer {
+    color: #2e7d32;
+    font-weight: 500;
+}
+
+/* Mode badge small - already defined in history.html but repeated for consistency */
+.mode-badge-small {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 3px;
+    text-transform: capitalize;
+}
+
+.mode-badge-small.passive {
+    background: #e8f4fd;
+    color: #1565c0;
+}
+
+.mode-badge-small.recall {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.status-badge {
+    display: inline-block;
+    padding: 0.2rem 0.5rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 3px;
+    text-transform: capitalize;
+}
+
+.status-badge.completed {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.status-badge.abandoned {
+    background: #fff3e0;
+    color: #e65100;
+}
+
+.status-badge.active {
+    background: #e3f2fd;
+    color: #1565c0;
+}
+</style>
+{% endblock %}

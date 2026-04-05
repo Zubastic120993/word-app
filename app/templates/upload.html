@@ -1,0 +1,815 @@
+{% extends "base.html" %}
+
+{% block title %}Upload Vocabulary - Word App{% endblock %}
+
+{% block content %}
+<h1>Upload Vocabulary</h1>
+
+<p class="text-muted">Upload a vocabulary file (PDF or Word). Each line should contain a word/phrase and its translation separated by a dash.</p>
+
+<!-- Step 1: File Upload -->
+<div id="upload-step" class="card">
+    <h2>Step 1: Select File & Group</h2>
+    <form id="upload-form" enctype="multipart/form-data">
+        <label for="file">Select PDF or Word File</label>
+        <div id="drop-zone" class="drop-zone">
+            <p class="drop-zone-label">Drag file here or click to select</p>
+            <input type="file" id="file" name="file" accept=".pdf,.docx,.doc" required>
+            <p id="selected-file-name" class="text-muted mt-1">No file selected</p>
+        </div>
+        
+        <label for="group-select">Vocabulary Group</label>
+        <select id="group-select" required>
+            <option value="">-- Select a group --</option>
+            <option value="__new__">➕ Create New Group</option>
+        </select>
+        
+        <div id="new-group-section" class="hidden mt-1">
+            <label for="new-group-name">New Group Name</label>
+            <input type="text" id="new-group-name" placeholder="e.g. Polish-English Basics">
+            <label for="new-group-description">Description (optional)</label>
+            <input type="text" id="new-group-description" placeholder="e.g. Basic vocabulary for beginners">
+        </div>
+        
+        <button type="submit" id="submit-btn">Parse & Validate</button>
+    </form>
+    
+    <div id="upload-error" class="hidden mt-1"></div>
+</div>
+
+<!-- Step 2: Review Units -->
+<div id="review-step" class="hidden">
+    <div class="card">
+        <h2>Step 2: Review Vocabulary</h2>
+        
+        <div id="ai-status" class="mb-1"></div>
+        <div class="review-sticky-shell mb-1">
+            <div id="parse-stats" class="parse-stats"></div>
+            
+            <!-- Validation Summary -->
+            <div id="validation-summary" class="validation-summary">
+                <div class="summary-item auto-accepted">
+                    <span class="summary-count" id="auto-accepted-count">0</span>
+                    <span class="summary-label">Auto-accepted</span>
+                </div>
+                <div class="summary-item needs-review">
+                    <span class="summary-count" id="needs-review-count">0</span>
+                    <span class="summary-label">Needs review</span>
+                </div>
+                <div class="summary-item manual">
+                    <span class="summary-count" id="manual-count">0</span>
+                    <span class="summary-label">Reviewed manually</span>
+                </div>
+                <div class="summary-item rejected">
+                    <span class="summary-count" id="rejected-count">0</span>
+                    <span class="summary-label">Rejected</span>
+                </div>
+            </div>
+            
+            <!-- Filter Tabs -->
+            <div class="filter-tabs">
+                <button onclick="setFilter('needs_review')" class="filter-tab active" id="tab-needs_review">
+                    Needs Review (<span id="filter-review-count">0</span>)
+                </button>
+                <button onclick="setFilter('auto_accepted')" class="filter-tab" id="tab-auto_accepted">
+                    Resolved (<span id="filter-auto-count">0</span>)
+                </button>
+                <button onclick="setFilter('duplicates')" class="filter-tab" id="tab-duplicates">
+                    Duplicates (<span id="filter-duplicate-count">0</span>)
+                </button>
+                <button onclick="setFilter('all')" class="filter-tab" id="tab-all">
+                    All (<span id="filter-all-count">0</span>)
+                </button>
+            </div>
+        </div>
+        
+        <div id="units-list"></div>
+        
+        <div id="no-review-needed" class="hidden text-center mt-2 mb-2">
+            <p class="text-muted">✓ No units are currently waiting for review.</p>
+        </div>
+        
+        <div id="pending-warning" class="hidden mb-1">
+            <div class="message warning">
+                ⚠ Some units are still pending review. Please confirm or reject all units before saving.
+            </div>
+        </div>
+        
+        <div class="review-footer mt-2">
+            <button onclick="cancelReview()" class="btn btn-secondary">Cancel</button>
+            <button onclick="confirmUnits()" id="confirm-btn" class="btn btn-success" disabled>Save accepted units</button>
+        </div>
+    </div>
+</div>
+
+<!-- Step 3: Result -->
+<div id="result-step" class="hidden">
+    <div class="card">
+        <div id="result-message"></div>
+        <button onclick="resetUpload()" class="btn mt-1">Upload Another File</button>
+    </div>
+</div>
+
+<h2>Expected Format</h2>
+<div class="card">
+    <pre style="font-family: monospace; background: #f5f5f5; padding: 1rem;">
+cukier - sugar
+dom - house
+Co to jest? - What is this?
+Jestem z Polski. - I am from Poland.
+    </pre>
+    <p class="text-muted mt-1">
+        <strong>Supported files:</strong> PDF, Word (.docx)<br>
+        <strong>Delimiters:</strong> " – ", " - ", "–", "-"
+    </p>
+</div>
+
+{% if recent_uploads %}
+<h2>Recent Uploads</h2>
+{% for upload in recent_uploads %}
+<div class="card">
+    <strong>{{ upload.source_pdf }}</strong>
+    <p class="text-muted">{{ upload.count }} units</p>
+</div>
+{% endfor %}
+{% endif %}
+{% endblock %}
+
+{% block scripts %}
+<script>
+let parsedData = null;
+let unitDecisions = {};  // index -> { action, text, translation, autoAccepted, confirmed, edited }
+let currentFilter = 'needs_review';
+let vocabularyGroups = [];
+let selectedFile = null;
+
+const fileInput = document.getElementById('file');
+const dropZone = document.getElementById('drop-zone');
+const selectedFileName = document.getElementById('selected-file-name');
+
+function updateSelectedFileLabel() {
+    selectedFileName.textContent = selectedFile ? selectedFile.name : 'No file selected';
+}
+
+// Load vocabulary groups on page load
+async function loadVocabularyGroups() {
+    try {
+        const response = await fetch('/api/vocabulary-groups');
+        vocabularyGroups = await response.json();
+        
+        const select = document.getElementById('group-select');
+        const existingOptions = select.querySelectorAll('option[value]:not([value=""]):not([value="__new__"])');
+        existingOptions.forEach(opt => opt.remove());
+        
+        // Add existing groups
+        vocabularyGroups.forEach(group => {
+            if (group.id) { // Skip "Ungrouped"
+                const option = document.createElement('option');
+                option.value = group.id;
+                option.textContent = `${group.name} (${group.vocabulary_count} files)`;
+                select.insertBefore(option, select.querySelector('option[value="__new__"]'));
+            }
+        });
+    } catch (error) {
+        console.error('Failed to load groups:', error);
+    }
+}
+
+// Show/hide new group section
+document.getElementById('group-select').addEventListener('change', function() {
+    const newGroupSection = document.getElementById('new-group-section');
+    const newGroupName = document.getElementById('new-group-name');
+    
+    if (this.value === '__new__') {
+        newGroupSection.classList.remove('hidden');
+        newGroupName.required = true;
+    } else {
+        newGroupSection.classList.add('hidden');
+        newGroupName.required = false;
+    }
+});
+
+// Load groups when page loads
+loadVocabularyGroups();
+
+fileInput.addEventListener('change', () => {
+    selectedFile = fileInput.files[0] || null;
+    updateSelectedFileLabel();
+});
+
+dropZone.addEventListener('click', (event) => {
+    if (event.target !== fileInput) {
+        fileInput.click();
+    }
+});
+
+dropZone.addEventListener('dragover', (event) => {
+    event.preventDefault();
+    dropZone.classList.add('drag-over');
+});
+
+dropZone.addEventListener('dragleave', (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('drag-over');
+});
+
+dropZone.addEventListener('drop', (event) => {
+    event.preventDefault();
+    dropZone.classList.remove('drag-over');
+    if (event.dataTransfer.files && event.dataTransfer.files[0]) {
+        selectedFile = event.dataTransfer.files[0];
+        updateSelectedFileLabel();
+    }
+});
+
+document.getElementById('upload-form').addEventListener('submit', async (e) => {
+    e.preventDefault();
+    
+    const groupSelect = document.getElementById('group-select');
+    const submitBtn = document.getElementById('submit-btn');
+    const errorDiv = document.getElementById('upload-error');
+    
+    if (!selectedFile) {
+        errorDiv.innerHTML = '<div class="message error">Please select a file.</div>';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
+    if (!groupSelect.value) {
+        errorDiv.innerHTML = '<div class="message error">Please select a vocabulary group.</div>';
+        errorDiv.classList.remove('hidden');
+        return;
+    }
+    
+    // Validate new group name if creating new group
+    if (groupSelect.value === '__new__') {
+        const newGroupName = document.getElementById('new-group-name').value.trim();
+        if (!newGroupName) {
+            errorDiv.innerHTML = '<div class="message error">Please enter a name for the new group.</div>';
+            errorDiv.classList.remove('hidden');
+            return;
+        }
+    }
+    
+    submitBtn.disabled = true;
+    submitBtn.innerHTML = '<span class="spinner"></span> Parsing & Validating (may take 30-60s)...';
+    errorDiv.classList.add('hidden');
+    
+    const formData = new FormData();
+    formData.append('file', selectedFile);
+    
+    // Add group information
+    if (groupSelect.value === '__new__') {
+        formData.append('new_group_name', document.getElementById('new-group-name').value.trim());
+        const description = document.getElementById('new-group-description').value.trim();
+        if (description) {
+            formData.append('new_group_description', description);
+        }
+    } else {
+        formData.append('group_id', groupSelect.value);
+    }
+    
+    try {
+        const response = await fetch('/api/pdfs/parse', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            parsedData = data;
+            initializeDecisions();
+            showReviewStep();
+        } else {
+            errorDiv.innerHTML = `
+                <div class="message error">
+                    <strong>Error:</strong> ${data.detail || 'Parse failed'}
+                </div>
+            `;
+            errorDiv.classList.remove('hidden');
+        }
+    } catch (error) {
+        errorDiv.innerHTML = `
+            <div class="message error">
+                <strong>Error:</strong> ${error.message}
+            </div>
+        `;
+        errorDiv.classList.remove('hidden');
+    }
+    
+    submitBtn.disabled = false;
+    submitBtn.innerHTML = 'Parse & Validate';
+});
+
+function initializeDecisions() {
+    unitDecisions = {};
+    
+    const aiAvailable = parsedData.ai_validated;
+    
+    parsedData.units.forEach(unit => {
+        const level = unit.validation_level || 'clean';
+        
+        if (aiAvailable && (level === 'clean' || level === 'safe_fix')) {
+            unitDecisions[unit.index] = {
+                action: 'accept',
+                text: null,
+                translation: null,
+                autoAccepted: true,
+                confirmed: true,
+                edited: false,
+            };
+        } else {
+            unitDecisions[unit.index] = {
+                action: 'pending',
+                text: null,
+                translation: null,
+                autoAccepted: false,
+                confirmed: false,
+                edited: false,
+            };
+        }
+    });
+}
+
+function showReviewStep() {
+    document.getElementById('upload-step').classList.add('hidden');
+    document.getElementById('review-step').classList.remove('hidden');
+    document.getElementById('result-step').classList.add('hidden');
+    
+    // Show AI status
+    const aiStatusDiv = document.getElementById('ai-status');
+    if (parsedData.ai_validated) {
+        aiStatusDiv.innerHTML = `
+            <div class="message success">
+                ✓ AI validation complete (${parsedData.ai_tokens_used || 0} tokens used)
+            </div>
+        `;
+    } else if (parsedData.ai_error) {
+        aiStatusDiv.innerHTML = `
+            <div class="message warning">
+                ⚠ AI validation unavailable: ${parsedData.ai_error}<br>
+                <strong>All ${parsedData.units.length} units require manual confirmation.</strong>
+            </div>
+        `;
+    } else {
+        aiStatusDiv.innerHTML = `
+            <div class="message warning">
+                ℹ AI validation disabled.<br>
+                <strong>All ${parsedData.units.length} units require manual confirmation before saving.</strong>
+            </div>
+        `;
+    }
+    
+    setFilter('needs_review');
+}
+
+function computeSummary(parsedData, unitDecisions) {
+    const total = parsedData.units.length;
+    let pending = 0;
+    let rejected = 0;
+    let autoAccepted = 0;
+    let edited = 0;
+    let manuallyConfirmed = 0;
+    
+    parsedData.units.forEach(unit => {
+        const decision = unitDecisions[unit.index];
+        if (!decision) return;
+        
+        if (decision.action === 'pending' || (decision.action === 'edit' && !decision.edited)) {
+            pending++;
+        } else if (decision.action === 'reject') {
+            rejected++;
+        } else if (decision.edited) {
+            edited++;
+        } else if (decision.confirmed && !decision.autoAccepted) {
+            manuallyConfirmed++;
+        } else if (decision.autoAccepted) {
+            autoAccepted++;
+        }
+    });
+    
+    return {
+        total,
+        pending,
+        rejected,
+        autoAccepted,
+        edited,
+        manuallyConfirmed,
+    };
+}
+
+function countAcceptedUnits(parsedData, unitDecisions) {
+    let count = 0;
+    
+    parsedData.units.forEach(unit => {
+        const decision = unitDecisions[unit.index];
+        if (!decision) return;
+        
+        const isRejected = decision.action === 'reject';
+        const isPending = decision.action === 'pending' || (decision.action === 'edit' && !decision.edited);
+        
+        if (!isRejected && !isPending && !unit.is_duplicate) {
+            count++;
+        }
+    });
+    
+    return count;
+}
+
+function updateParseStats() {
+    if (!parsedData) return;
+    
+    const statsDiv = document.getElementById('parse-stats');
+    const totalParsed = parsedData.total_parsed ?? parsedData.units.length;
+    const skipped = parsedData.skipped_lines ?? 0;
+    const duplicates = parsedData.duplicates_found ?? 0;
+    const initialNeedsReview = parsedData.validation_summary
+        ? (parsedData.validation_summary.needs_review ?? 0)
+        : 0;
+    const summary = computeSummary(parsedData, unitDecisions);
+    const acceptedCount = countAcceptedUnits(parsedData, unitDecisions);
+    
+    statsDiv.innerHTML = `
+        <div class="parse-stats-strip">
+            <span class="parse-stat"><strong>Parsed</strong> ${totalParsed}</span>
+            <span class="parse-stat"><strong>Pending</strong> ${summary.pending}</span>
+            <span class="parse-stat"><strong>Accepted</strong> ${acceptedCount}</span>
+            <span class="parse-stat"><strong>Duplicates</strong> ${duplicates}</span>
+            <span class="parse-stat"><strong>Skipped</strong> ${skipped}</span>
+            <span class="parse-stat"><strong>Initial review</strong> ${initialNeedsReview}</span>
+        </div>
+    `;
+}
+
+function updateSummary() {
+    if (!parsedData) return;
+    
+    const summary = computeSummary(parsedData, unitDecisions);
+    
+    document.getElementById('auto-accepted-count').textContent = summary.autoAccepted;
+    document.getElementById('needs-review-count').textContent = summary.pending;
+    document.getElementById('manual-count').textContent = summary.edited + summary.manuallyConfirmed;
+    document.getElementById('rejected-count').textContent = summary.rejected;
+    
+    document.getElementById('filter-review-count').textContent = summary.pending;
+    document.getElementById('filter-auto-count').textContent = summary.autoAccepted + summary.edited + summary.manuallyConfirmed;
+    document.getElementById('filter-duplicate-count').textContent = parsedData.duplicates_found || 0;
+    document.getElementById('filter-all-count').textContent = summary.total;
+    
+    const noReviewDiv = document.getElementById('no-review-needed');
+    if (summary.pending === 0 && currentFilter === 'needs_review') {
+        noReviewDiv.classList.remove('hidden');
+    } else {
+        noReviewDiv.classList.add('hidden');
+    }
+    
+    const confirmBtn = document.getElementById('confirm-btn');
+    const pendingWarning = document.getElementById('pending-warning');
+    const acceptedCount = countAcceptedUnits(parsedData, unitDecisions);
+    
+    confirmBtn.textContent = `Save ${acceptedCount} accepted units`;
+    
+    if (summary.pending === 0) {
+        confirmBtn.disabled = false;
+        pendingWarning.classList.add('hidden');
+    } else {
+        confirmBtn.disabled = true;
+        pendingWarning.classList.remove('hidden');
+    }
+    
+    updateParseStats();
+}
+
+function setFilter(filter) {
+    currentFilter = filter;
+    
+    // Update tab styles
+    document.querySelectorAll('.filter-tab').forEach(tab => {
+        tab.classList.remove('active');
+    });
+    document.getElementById(`tab-${filter}`).classList.add('active');
+    
+    renderUnitsList();
+    updateSummary();
+}
+
+function getFilteredUnits() {
+    return parsedData.units.filter(unit => {
+        const decision = unitDecisions[unit.index];
+        
+        if (currentFilter === 'all') return true;
+        
+        if (currentFilter === 'auto_accepted') {
+            return decision.action !== 'reject' && (
+                decision.autoAccepted ||
+                decision.edited ||
+                decision.confirmed
+            );
+        }
+        
+        if (currentFilter === 'needs_review') {
+            return decision.action === 'pending' || (decision.action === 'edit' && !decision.edited);
+        }
+        
+        if (currentFilter === 'duplicates') {
+            return unit.is_duplicate;
+        }
+        
+        return true;
+    });
+}
+
+function renderUnitsList() {
+    const container = document.getElementById('units-list');
+    container.innerHTML = '';
+    
+    const filteredUnits = getFilteredUnits();
+    
+    filteredUnits.forEach(unit => {
+        const decision = unitDecisions[unit.index];
+        const level = unit.validation_level || 'clean';
+        const hasSuggestion = unit.suggested_text || unit.suggested_translation;
+        const isPending = decision.action === 'pending' || (decision.action === 'edit' && !decision.edited);
+        
+        let cardClass = 'unit-card';
+        if (decision.action === 'reject') cardClass += ' rejected';
+        else if (isPending) cardClass += ' pending';
+        else if (decision.edited) cardClass += ' edited';
+        else if (decision.autoAccepted) cardClass += ' auto-accepted';
+        else if (decision.confirmed) cardClass += ' confirmed';
+        if (unit.is_duplicate) cardClass += ' duplicate';
+        
+        let levelBadge = '';
+        if (isPending) {
+            levelBadge = '<span class="level-badge pending">⏳ Pending</span>';
+        } else if (decision.edited) {
+            levelBadge = '<span class="level-badge edited">✓ Edited</span>';
+        } else if (decision.action === 'reject') {
+            levelBadge = '<span class="level-badge rejected">✗ Rejected</span>';
+        } else if (decision.confirmed && !decision.autoAccepted) {
+            levelBadge = '<span class="level-badge confirmed">✓ Confirmed</span>';
+        } else if (level === 'clean') {
+            levelBadge = '<span class="level-badge clean">✓ Clean</span>';
+        } else if (level === 'safe_fix') {
+            levelBadge = '<span class="level-badge safe-fix">⚡ Auto-fixed</span>';
+        } else if (level === 'review') {
+            levelBadge = '<span class="level-badge review">👀 Review</span>';
+        } else if (level === 'manual') {
+            levelBadge = '<span class="level-badge manual">✎ Edit needed</span>';
+        }
+        
+        let errorBadges = '';
+        if (unit.has_spelling_error) {
+            errorBadges += '<span class="error-badge spelling">Spelling</span>';
+        }
+        if (unit.has_punctuation_error) {
+            errorBadges += '<span class="error-badge punctuation">Punctuation</span>';
+        }
+        if (unit.is_duplicate) {
+            errorBadges += '<span class="error-badge duplicate">⚠ Duplicate</span>';
+        }
+        
+        let displayText = unit.text;
+        let displayTranslation = unit.translation;
+        
+        if (decision.edited) {
+            displayText = decision.text || unit.text;
+            displayTranslation = decision.translation || unit.translation;
+        } else if (level === 'safe_fix' && (decision.action === 'accept' || decision.autoAccepted)) {
+            displayText = unit.suggested_text || unit.text;
+            displayTranslation = unit.suggested_translation || unit.translation;
+        }
+        
+        let suggestionHtml = '';
+        if (hasSuggestion && level !== 'safe_fix') {
+            suggestionHtml = `
+                <div class="suggestion">
+                    <strong>AI Suggestion:</strong>
+                    ${unit.suggested_text ? `<br>Polish: <em>${escapeHtml(unit.suggested_text)}</em>` : ''}
+                    ${unit.suggested_translation ? `<br>English: <em>${escapeHtml(unit.suggested_translation)}</em>` : ''}
+                    ${unit.validation_notes ? `<br><small>${escapeHtml(unit.validation_notes)}</small>` : ''}
+                    ${unit.confidence ? `<br><small>Confidence: ${Math.round(unit.confidence * 100)}%</small>` : ''}
+                </div>
+            `;
+        }
+        
+        let duplicateNotice = '';
+        if (unit.is_duplicate) {
+            duplicateNotice = `
+                <div class="message info mt-1">
+                    This entry already exists in the database and will be skipped on submit unless you edit it into a distinct pair.
+                </div>
+            `;
+        }
+        
+        const acceptActive = decision.action === 'accept' || (decision.autoAccepted && decision.action !== 'reject');
+        const editActive = decision.action === 'edit';
+        const rejectActive = decision.action === 'reject';
+        
+        const html = `
+            <div class="${cardClass}" data-index="${unit.index}">
+                <div class="unit-content">
+                    <div class="unit-header">
+                        <span class="unit-type">${unit.type}</span>
+                        ${levelBadge}
+                        ${errorBadges}
+                    </div>
+                    <div class="unit-text">
+                        <strong>PL:</strong> <span class="text-value">${escapeHtml(displayText)}</span>
+                        ${level === 'safe_fix' && unit.suggested_text ? `<small class="original-text">(was: ${escapeHtml(unit.text)})</small>` : ''}
+                    </div>
+                    <div class="unit-translation">
+                        <strong>EN:</strong> <span class="translation-value">${escapeHtml(displayTranslation)}</span>
+                        ${level === 'safe_fix' && unit.suggested_translation ? `<small class="original-text">(was: ${escapeHtml(unit.translation)})</small>` : ''}
+                    </div>
+                    ${suggestionHtml}
+                    ${duplicateNotice}
+                </div>
+                <div class="unit-actions">
+                    <button onclick="setAction(${unit.index}, 'accept')" class="btn-action ${acceptActive ? 'active' : ''}">✓ ${hasSuggestion && level !== 'clean' && level !== 'safe_fix' ? 'Accept Suggestion' : 'Accept'}</button>
+                    <button onclick="showEditForm(${unit.index})" class="btn-action ${editActive ? 'active' : ''}">✎ Edit</button>
+                    <button onclick="setAction(${unit.index}, 'reject')" class="btn-action btn-reject ${rejectActive ? 'active' : ''}">✗ Reject</button>
+                </div>
+                <div class="edit-form hidden" id="edit-form-${unit.index}">
+                    <input type="text" placeholder="Polish text" value="${escapeHtml(unit.suggested_text || unit.text)}" id="edit-text-${unit.index}">
+                    <input type="text" placeholder="English translation" value="${escapeHtml(unit.suggested_translation || unit.translation)}" id="edit-translation-${unit.index}">
+                    <button onclick="saveEdit(${unit.index})" class="btn">Save Edit</button>
+                </div>
+            </div>
+        `;
+        
+        container.innerHTML += html;
+    });
+    
+    if (filteredUnits.length === 0 && currentFilter === 'needs_review') {
+        container.innerHTML = '';
+    }
+}
+
+function setAction(index, action) {
+    const decision = unitDecisions[index];
+    decision.action = action;
+    
+    if (action !== 'edit') {
+        decision.text = null;
+        decision.translation = null;
+        decision.edited = false;
+    }
+    
+    if (action === 'accept' || action === 'reject') {
+        decision.confirmed = true;
+        decision.autoAccepted = false;
+    }
+    
+    if (action === 'edit') {
+        decision.confirmed = false;
+        decision.autoAccepted = false;
+    }
+    
+    renderUnitsList();
+    updateSummary();
+}
+
+function showEditForm(index) {
+    setAction(index, 'edit');
+    document.getElementById(`edit-form-${index}`).classList.remove('hidden');
+}
+
+function saveEdit(index) {
+    const text = document.getElementById(`edit-text-${index}`).value.trim();
+    const translation = document.getElementById(`edit-translation-${index}`).value.trim();
+    
+    unitDecisions[index].action = 'edit';
+    unitDecisions[index].text = text;
+    unitDecisions[index].translation = translation;
+    unitDecisions[index].edited = true;
+    unitDecisions[index].confirmed = true;
+    unitDecisions[index].autoAccepted = false;
+
+    renderUnitsList();
+    updateSummary();
+}
+
+async function confirmUnits() {
+    const pendingCount = Object.values(unitDecisions).filter(
+        d => d.action === 'pending' || (d.action === 'edit' && !d.edited)
+    ).length;
+    if (pendingCount > 0) {
+        alert(`Cannot save: ${pendingCount} units are still pending. Please confirm or reject all units.`);
+        return;
+    }
+    
+    const confirmBtn = document.getElementById('confirm-btn');
+    confirmBtn.disabled = true;
+    confirmBtn.textContent = 'Saving...';
+    
+    const confirmations = parsedData.units.map(unit => {
+        const decision = unitDecisions[unit.index];
+        const level = unit.validation_level || 'clean';
+        
+        // Determine final action - auto-accepted units count as 'accept'
+        let finalAction = decision.action;
+        if (decision.autoAccepted && finalAction !== 'reject') {
+            finalAction = 'accept';
+        }
+        
+        // For safe_fix with accept, use the suggested values
+        let finalText = decision.text;
+        let finalTranslation = decision.translation;
+        
+        if (finalAction === 'accept' && level === 'safe_fix') {
+            finalText = unit.suggested_text || null;
+            finalTranslation = unit.suggested_translation || null;
+        }
+        
+        return {
+            index: unit.index,
+            action: finalAction,
+            text: finalText,
+            translation: finalTranslation
+        };
+    });
+    
+    try {
+        const response = await fetch('/api/pdfs/confirm', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                filename: parsedData.filename,
+                units: confirmations,
+                original_units: parsedData.units,
+                group_id: parsedData.group_id,
+                new_group_name: parsedData.new_group_name,
+                new_group_description: parsedData.new_group_description
+            })
+        });
+        
+        const data = await response.json();
+        
+        if (response.ok) {
+            showResult(true, data);
+        } else {
+            showResult(false, { detail: data.detail || 'Save failed' });
+        }
+    } catch (error) {
+        showResult(false, { detail: error.message });
+    }
+    
+    confirmBtn.disabled = false;
+    confirmBtn.textContent = `Save ${countAcceptedUnits(parsedData, unitDecisions)} accepted units`;
+}
+
+function showResult(success, data) {
+    document.getElementById('upload-step').classList.add('hidden');
+    document.getElementById('review-step').classList.add('hidden');
+    document.getElementById('result-step').classList.remove('hidden');
+    
+    const resultDiv = document.getElementById('result-message');
+    
+    if (success) {
+        const autoAccepted = data.units_auto_accepted || 0;
+        resultDiv.innerHTML = `
+            <div class="message success">
+                <strong>Success!</strong><br>
+                File: ${data.filename}<br>
+                Units saved: ${data.units_saved}${autoAccepted > 0 ? ` (${autoAccepted} auto-accepted)` : ''}<br>
+                Units rejected: ${data.units_rejected}
+            </div>
+        `;
+    } else {
+        resultDiv.innerHTML = `
+            <div class="message error">
+                <strong>Error:</strong> ${data.detail}
+            </div>
+        `;
+    }
+}
+
+function cancelReview() {
+    resetUpload();
+}
+
+function resetUpload() {
+    parsedData = null;
+    unitDecisions = {};
+    currentFilter = 'needs_review';
+    selectedFile = null;
+    
+    document.getElementById('upload-step').classList.remove('hidden');
+    document.getElementById('review-step').classList.add('hidden');
+    document.getElementById('result-step').classList.add('hidden');
+    document.getElementById('upload-error').classList.add('hidden');
+    document.getElementById('file').value = '';
+    document.getElementById('parse-stats').innerHTML = '';
+    dropZone.classList.remove('drag-over');
+    updateSelectedFileLabel();
+}
+
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text ?? '';
+    return div.innerHTML;
+}
+</script>
+{% endblock %}

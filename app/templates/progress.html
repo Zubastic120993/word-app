@@ -1,0 +1,578 @@
+{% extends "base.html" %}
+
+{% block title %}Progress - Word App{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Progress</h1>
+</div>
+
+<div class="daily-dashboard progress-section {% if daily_stats.cap_exceeded %}dashboard-warning{% endif %}">
+    <h2>📊 Daily Learning Overview</h2>
+
+    <div class="dashboard-grid">
+        <div><strong>Words introduced today:</strong> {{ daily_stats.words_introduced_today }}</div>
+        <div><strong>Recall practice today:</strong> {{ daily_stats.recall_sessions_today }}</div>
+        <div><strong>Passive practice today:</strong> {{ daily_stats.passive_sessions_today }}</div>
+        <div><strong>Recall accuracy today:</strong> {{ "%.1f"|format(daily_stats.recall_accuracy_today * 100) }}%</div>
+    </div>
+</div>
+
+<!-- Hero Section: Next Learning Action -->
+<div class="hero-action-card progress-section">
+    <h2 class="hero-title">What to Study Next</h2>
+    
+    <div class="hero-actions">
+        {% if stats.weak_words_count > 0 %}
+        <div class="hero-action">
+            <div class="action-icon">🔴</div>
+            <div class="action-content">
+                <div class="action-label">{{ stats.weak_words_count }} weak word{{ 's' if stats.weak_words_count != 1 else '' }} (&lt;50% confidence)</div>
+                <a href="/study?weak_only=true" class="btn btn-primary">Practice Weak Words</a>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if stats.due_words_count > 0 %}
+        <div class="hero-action">
+            <div class="action-icon">⏰</div>
+            <div class="action-content">
+                <div class="action-label">{{ stats.due_words_count }} word{{ 's' if stats.due_words_count != 1 else '' }} due for review</div>
+                <a href="/study?due_only=true" class="btn btn-primary">Review Due Words</a>
+            </div>
+        </div>
+        {% endif %}
+        
+        {% if stats.weak_words_count == 0 and stats.due_words_count == 0 %}
+        <div class="hero-action">
+            <div class="action-icon">✅</div>
+            <div class="action-content">
+                <div class="action-label">All caught up! Start mixed practice (new, weak, and review).</div>
+                <a href="/study" class="btn btn-primary">Practice Session</a>
+            </div>
+        </div>
+        {% endif %}
+    </div>
+    
+    <div class="hero-streak">
+        🔥 Study streak: <strong>{{ stats.learning_streak_days }}</strong> day{{ 's' if stats.learning_streak_days != 1 else '' }}
+    </div>
+</div>
+
+<!-- Learning funnel (overview; buckets are not mutually exclusive) -->
+<div class="progress-section progress-funnel-section">
+    <h2 class="progress-funnel-heading">Where you are</h2>
+    <div class="progress-funnel">
+        <div class="progress-funnel-item">
+            <div class="progress-funnel-value">{{ stats.never_seen }}</div>
+            <div class="progress-funnel-label">Never seen</div>
+        </div>
+        <div class="progress-funnel-item">
+            <div class="progress-funnel-value">{{ stats.learning }}</div>
+            <div class="progress-funnel-label">Learning</div>
+        </div>
+        <div class="progress-funnel-item">
+            <div class="progress-funnel-value">{{ stats.learned }}</div>
+            <div class="progress-funnel-label">Learned</div>
+        </div>
+        <div class="progress-funnel-item">
+            <div class="progress-funnel-value">{{ stats.mastered_count }}</div>
+            <div class="progress-funnel-label">Mastered</div>
+        </div>
+    </div>
+    <p class="progress-funnel-note">Overview (not mutually exclusive)</p>
+</div>
+
+<!-- Key stats (single row; week activity as one line below) -->
+<div class="stats-grid stats-grid-progress-4">
+    <div class="stat-card">
+        <div class="number">{{ stats.total_answers }}</div>
+        <div class="label">Total answers</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.correct_rate }}%</div>
+        <div class="label">Accuracy</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.completed_sessions }}</div>
+        <div class="label">Sessions</div>
+    </div>
+    <div class="stat-card">
+        <div class="number">{{ stats.mastered_pct }}%</div>
+        <div class="label"><span title="Confidence ≥0.85, last recall correct, and not currently due">Mastered</span></div>
+        <div class="progress-bar mastery-bar" style="margin-top: 0.5rem;">
+            <div class="fill" style="width: {{ stats.mastered_pct }}%; background: #2e7d32;"></div>
+        </div>
+    </div>
+</div>
+<p class="progress-week-summary text-muted">{{ stats.week_answers }} answers this week · {{ stats.week_accuracy }}% accuracy</p>
+
+<div class="progress-daily-guidance card">
+    <div class="progress-daily-guidance-text">{{ daily_stats.recommended_plan }}</div>
+    <div class="progress-daily-guidance-badge">Overdue: {{ daily_stats.overdue_word_count }}</div>
+</div>
+
+{% set client_role = request.state.client_role | default("mac") %}
+
+<div class="progress-section">
+{% if client_role != "ipad" %}
+<h2>Vocabulary Groups</h2>
+{% endif %}
+{% if sources %}
+{% if client_role != "ipad" %}
+<!-- Vocabulary Groups (admin-only: fetches from /api/vocabulary-groups) -->
+<div id="vocabulary-groups-section" class="vocab-groups-section">
+    <p class="text-muted">Loading vocabulary groups...</p>
+</div>
+{% endif %}
+
+<!-- Library + per-source cards -->
+<h2>Your vocabulary sources</h2>
+<div class="mastery-section">
+    {% if source_stats.__all__ %}
+    <div class="source-stat-card mastery-card {% if source_stats.__all__.mastered_pct == 100 %}source-complete{% endif %}" data-source="__all__">
+        <div class="source-stat-header">
+            <h3>All sources</h3>
+            <span class="source-stat-count">{{ source_stats.__all__.total_count }} words</span>
+        </div>
+
+        <div class="mastery-primary">
+            <div class="mastery-primary-label">Mastered</div>
+            <div class="mastery-primary-value progress-mastered">
+                {{ source_stats.__all__.mastered_pct }}%
+                {% if source_stats.__all__.mastered_pct == 100 %} ✅{% endif %}
+            </div>
+            <div class="progress-bar mastery-bar" aria-label="Mastered progress">
+                <div class="fill" style="width: {{ source_stats.__all__.mastered_pct }}%;"></div>
+            </div>
+        </div>
+
+        <details class="metric-details">
+            <summary>Details ▾</summary>
+            <div class="mastery-secondary">
+                <div class="stat-metric passive-metric">
+                    <span class="metric-label">Passive</span>
+                    <span class="metric-value">{{ source_stats.__all__.passive_pct }}%</span>
+                </div>
+                <div class="stat-metric recall-metric">
+                    <span class="metric-label">Recall</span>
+                    <span class="metric-value">{{ source_stats.__all__.recall_pct }}%</span>
+                </div>
+                <div class="stat-metric">
+                    <span class="metric-label">Due</span>
+                    <span class="metric-value">{{ source_stats.__all__.due_count }}</span>
+                </div>
+                <div class="stat-metric">
+                    <span class="metric-label">Weak</span>
+                    <span class="metric-value">{{ source_stats.__all__.weak_count }}</span>
+                </div>
+            </div>
+        </details>
+    </div>
+    {% endif %}
+
+    <div class="progress-pdf-grid">
+        {% set pdf_ns = namespace(items=[]) %}
+        {% for source in sources %}
+            {% if source_stats[source.name] %}
+                {% set st = source_stats[source.name] %}
+                {% set pdf_ns.items = pdf_ns.items + [{'name': source.name, 'data': st}] %}
+            {% endif %}
+        {% endfor %}
+        {% for item in pdf_ns.items|sort(attribute='data.mastered_pct') %}
+        <div class="progress-pdf-card card {% if item.data.mastered_pct == 100 %}source-complete{% endif %}">
+            <div class="progress-pdf-card-title" title="{{ item.name }}">{{ item.name }}</div>
+            <div class="progress-pdf-card-meta text-muted">{{ item.data.total_count }} words</div>
+            <div class="progress-pdf-metrics">
+                <div>Mastered: {{ item.data.mastered_pct }}%</div>
+                <div>Due: {{ item.data.due_count }}</div>
+                <div>Weak: {{ item.data.weak_count }}</div>
+            </div>
+            <div class="progress-bar mastery-bar progress-pdf-bar" aria-label="Mastered progress for {{ item.name }}">
+                <div class="fill" style="width: {{ item.data.mastered_pct }}%;"></div>
+            </div>
+            <a href="/study?source_pdfs={{ item.name | urlquote }}" class="btn btn-primary btn-small progress-pdf-study-btn">Study</a>
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% else %}
+<div class="card">
+    <p class="text-muted">No PDFs uploaded yet.</p>
+</div>
+{% endif %}
+</div>
+
+<div class="progress-section progress-weak-section">
+<div class="weak-section-header">
+    <div>
+        <h2 class="weak-section-title">Weak Units ({{ stats.weak_words_count }})</h2>
+        <p class="weak-section-subtitle">Units with confidence below 50%.</p>
+    </div>
+    {% if stats.weak_words_count > 0 %}
+    <a href="/study?weak_only=true" class="btn btn-small btn-primary">Practice Weak Words</a>
+    {% endif %}
+</div>
+{% if weak_units %}
+<div class="card weak-card">
+    <ul class="weak-list">
+        {% for unit in weak_units %}
+            {% if unit.confidence < 0.2 %}
+                {% set confidence_class = "sev-critical" %}
+                {% set confidence_icon = "🔴" %}
+            {% elif unit.confidence < 0.35 %}
+                {% set confidence_class = "sev-high" %}
+                {% set confidence_icon = "🟠" %}
+            {% else %}
+                {% set confidence_class = "sev-medium" %}
+                {% set confidence_icon = "🟡" %}
+            {% endif %}
+            {% set ns = namespace(meta=[unit.source_pdf]) %}
+            {% if unit.recall_fail_streak >= 3 %}
+                {% set ns.meta = ns.meta + ['stuck'] %}
+            {% elif unit.last_recall_result %}
+                {% set ns.meta = ns.meta + [unit.last_recall_result] %}
+            {% endif %}
+            {% if unit.review_status %}
+                {% set ns.meta = ns.meta + [unit.review_status|lower] %}
+            {% endif %}
+            <li class="weak-item">
+                <div class="weak-main">
+                    <span class="weak-confidence {{ confidence_class }}">{{ confidence_icon }} {{ (unit.confidence * 100)|int }}%</span>
+                    <span class="weak-text">{{ unit.text }}</span>
+                </div>
+                <div class="weak-translation">{{ unit.translation }}</div>
+                <div class="weak-meta">{{ ns.meta|join(' • ') }}</div>
+            </li>
+        {% endfor %}
+    </ul>
+</div>
+{% else %}
+<div class="card weak-card">
+    <p class="text-muted">No difficult words here. Keep learning!</p>
+</div>
+{% endif %}
+</div>
+
+{% if client_role != "ipad" %}
+<!-- Vocabulary Management Link (admin-only) -->
+<div class="card" style="margin-top: 2rem; text-align: center;">
+    <h3>Manage Vocabulary</h3>
+    <p class="text-muted">Add, edit, search, and delete vocabulary words</p>
+    <a href="/vocabulary" class="btn btn-primary">Manage Vocabulary →</a>
+</div>
+{% endif %}
+
+<script>
+// Helper function for HTML escaping
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.textContent = text;
+    return div.innerHTML;
+}
+
+// Load vocabulary groups
+async function loadVocabularyGroups() {
+    const container = document.getElementById('vocabulary-groups-section');
+    if (!container) return;
+    
+    try {
+        const response = await fetch('/api/vocabulary-groups');
+        if (!response.ok) throw new Error('Failed to load groups');
+        
+        const groups = await response.json();
+        
+        if (groups.length === 0) {
+            container.innerHTML = '<p class="text-muted">No vocabulary groups found.</p>';
+            return;
+        }
+        
+        let html = '';
+        for (const group of groups) {
+            if (group.vocabulary_count === 0) continue;
+            
+            html += `
+                <details class="vocab-group-accordion">
+                    <summary class="vocab-group-header">
+                        <span class="vocab-group-name">${escapeHtml(group.name)}</span>
+                        <span class="vocab-group-stats">${group.vocabulary_count} files, ${group.total_units} words</span>
+                    </summary>
+                    <div class="vocab-group-content">
+                        ${group.description ? `<p class="text-muted vocab-group-desc">${escapeHtml(group.description)}</p>` : ''}
+                        <ul class="vocab-group-list">
+                            ${group.vocabularies.map(v => `
+                                <li class="vocab-group-item">
+                                    <span class="vocab-item-name">${escapeHtml(v.name)}</span>
+                                    <span class="vocab-item-count">${v.unit_count} words</span>
+                                </li>
+                            `).join('')}
+                        </ul>
+                    </div>
+                </details>
+            `;
+        }
+        
+        container.innerHTML = html;
+    } catch (error) {
+        container.innerHTML = `<p class="text-muted">Error loading groups: ${error.message}</p>`;
+    }
+}
+
+// Load vocabulary groups on page load (admin-only; skipped for iPad)
+{% if client_role != "ipad" %}
+loadVocabularyGroups();
+{% endif %}
+</script>
+
+<style>
+/* Hero Action Card */
+.hero-action-card {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 12px;
+    padding: 2rem;
+    margin-bottom: 2rem;
+    color: white;
+    box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+}
+
+.hero-title {
+    margin: 0 0 1.5rem 0;
+    font-size: 1.5rem;
+    font-weight: 600;
+    color: white;
+}
+
+.hero-actions {
+    display: flex;
+    flex-direction: column;
+    gap: 1rem;
+    margin-bottom: 1.5rem;
+}
+
+.hero-action {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    background: rgba(255, 255, 255, 0.15);
+    padding: 1.25rem;
+    border-radius: 8px;
+    backdrop-filter: blur(10px);
+}
+
+.action-icon {
+    font-size: 2rem;
+    flex-shrink: 0;
+}
+
+.action-content {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+}
+
+.action-label {
+    font-size: 1rem;
+    color: rgba(255, 255, 255, 0.95);
+}
+
+.hero-action .btn {
+    background: white;
+    color: #667eea;
+    border: none;
+    padding: 0.6rem 1.5rem;
+    font-weight: 600;
+    white-space: nowrap;
+}
+
+.hero-action .btn:hover {
+    background: #f8f9fa;
+    transform: translateY(-1px);
+}
+
+.hero-streak {
+    text-align: center;
+    font-size: 1.1rem;
+    opacity: 0.9;
+}
+
+.stat-sublabel {
+    font-size: 0.75rem;
+    color: #888;
+    margin-top: 0.25rem;
+}
+
+.progress-section {
+    margin-top: 28px;
+}
+
+.progress-section:first-of-type {
+    margin-top: 0;
+}
+
+.vocab-groups-section {
+    margin-bottom: 1.5rem;
+}
+
+.vocab-group-accordion {
+    margin-bottom: 0.85rem;
+    border: 1px solid #ececec;
+    border-radius: 10px;
+    background: #fcfcfc;
+}
+
+.vocab-group-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: baseline;
+    gap: 1rem;
+    padding: 0.9rem 1rem;
+    font-weight: 600;
+    cursor: pointer;
+}
+
+.vocab-group-name {
+    color: #2d3748;
+}
+
+.vocab-group-stats,
+.vocab-group-desc,
+.vocab-item-count {
+    color: #777;
+    font-size: 0.9rem;
+}
+
+.vocab-group-content {
+    padding: 0 1rem 1rem;
+}
+
+.vocab-group-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+}
+
+.vocab-group-item {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    padding: 0.45rem 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.vocab-group-item:last-child {
+    border-bottom: none;
+}
+
+/* Weak Units */
+.progress-weak-section {
+    background: #fafafa;
+    border-left: 4px solid #e74c3c;
+    padding: 18px;
+    border-radius: 8px;
+}
+
+.weak-section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    gap: 1rem;
+    margin-bottom: 0.75rem;
+}
+
+.weak-section-title {
+    margin: 0;
+}
+
+.weak-section-subtitle {
+    margin: 0.35rem 0 0;
+    color: #666;
+    font-size: 0.95rem;
+}
+
+.weak-card {
+    margin-bottom: 0;
+}
+
+.weak-list {
+    list-style: none;
+    padding-left: 0;
+    margin: 0;
+}
+
+.weak-item {
+    padding: 8px 0;
+    border-bottom: 1px solid #f0f0f0;
+}
+
+.weak-item:last-child {
+    border-bottom: none;
+}
+
+.weak-main {
+    display: flex;
+    align-items: baseline;
+    gap: 0.6rem;
+    font-weight: 600;
+    margin-bottom: 2px;
+    line-height: 1.2;
+}
+
+.weak-confidence {
+    min-width: 4.75rem;
+    font-variant-numeric: tabular-nums;
+}
+
+.weak-text {
+    color: #222;
+}
+
+.weak-translation {
+    margin-top: 0.2rem;
+    margin-bottom: 2px;
+    font-size: 13px;
+    color: #666;
+    line-height: 1.2;
+}
+
+.weak-meta {
+    font-size: 12px;
+    color: #777;
+    line-height: 1.2;
+}
+
+.sev-critical {
+    color: #c0392b;
+    font-weight: 600;
+}
+
+.sev-high {
+    color: #e67e22;
+}
+
+.sev-medium {
+    color: #f1c40f;
+}
+
+/* Responsive Hero Actions */
+@media (max-width: 768px) {
+    .action-content {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+    }
+    
+    .hero-action .btn {
+        width: 100%;
+    }
+
+    .weak-section-header,
+    .vocab-group-header,
+    .vocab-group-item {
+        flex-direction: column;
+        align-items: flex-start;
+    }
+}
+</style>
+{% endblock %}

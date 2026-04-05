@@ -1,0 +1,262 @@
+{% extends "base.html" %}
+
+{% block title %}Analytics - Word App{% endblock %}
+
+{% block content %}
+{% macro trend_badge(label, direction) -%}
+{% if direction == "insufficient" %}
+<span class="trend-muted">{{ label }}: Insufficient data</span>
+{% elif direction == "improving" %}
+<span class="trend-up">{{ label }}: ↑ Improving</span>
+{% elif direction == "declining" %}
+<span class="trend-down">{{ label }}: ↓ Declining</span>
+{% else %}
+<span class="trend-stable">{{ label }}: → Stable</span>
+{% endif %}
+{%- endmacro %}
+
+<div class="page-header">
+    <h1>Analytics</h1>
+    <p class="page-subtitle">Study activity and AI chat practice</p>
+</div>
+
+<section class="analytics-section">
+    <h2>Your study activity</h2>
+    <p class="analytics-section-note text-muted">Graded answers from <strong>Practice</strong> (passive and recall).</p>
+    <p class="analytics-windows-note text-muted">7-day metrics use UTC calendar days; 30-day metrics are rolling.</p>
+
+    <div class="analytics-summary">
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Answers (30 days)</span>
+            <strong class="analytics-stat-value">{{ study_summary.answers_30d }}</strong>
+        </div>
+        <div class="analytics-stat-card {% if study_summary.accuracy_30d < 0.5 %}analytics-stat-card-low{% elif study_summary.accuracy_30d >= 0.8 %}analytics-stat-card-good{% endif %}">
+            <span class="analytics-stat-label">Accuracy (30 days)</span>
+            <strong class="analytics-stat-value">
+                {% if study_summary.answers_30d > 0 %}
+                {{ "%.0f"|format(study_summary.accuracy_30d * 100) }}%
+                {% else %}
+                —
+                {% endif %}
+            </strong>
+        </div>
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Last 7 days · answers</span>
+            <strong class="analytics-stat-value">{{ study_summary.answers_7d }}</strong>
+        </div>
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Last 7 days · accuracy</span>
+            <strong class="analytics-stat-value">
+                {% if study_summary.answers_7d > 0 %}
+                {{ "%.0f"|format(study_summary.accuracy_7d * 100) }}%
+                {% else %}
+                —
+                {% endif %}
+            </strong>
+        </div>
+    </div>
+
+    {% if study_activity_insight %}
+    <div class="analytics-insight-card card">
+        <h3 class="analytics-insight-card-title">Suggested next step</h3>
+        <p class="analytics-insight-card-body">{{ study_activity_insight.body }}</p>
+        <a class="btn btn-primary" href="{{ study_activity_insight.cta_href }}">{{ study_activity_insight.cta_label }}</a>
+    </div>
+    {% endif %}
+
+    <h3 class="mini-chart-heading">Last 7 days (UTC)</h3>
+    <div class="mini-chart" title="Answers per calendar day (UTC), last 7 days — same window as ‘Last 7 days’ above">
+        {% if chart_day_max == 0 %}
+        <p class="mini-chart-empty-hint text-muted">No study activity in the last 7 days</p>
+        {% endif %}
+        <div class="mini-chart-bars" role="img" aria-label="Answers per UTC calendar day, last 7 days">
+            {% for v in answers_per_day_7 %}
+            {% set h = (v / chart_day_max * 100) if chart_day_max > 0 else 0 %}
+            {% set i = loop.index0 %}
+            <div class="mini-chart-cell{% if chart_day_weekend[i] %} weekend{% endif %}">
+                <div class="mini-chart-bar-wrap">
+                    <div class="bar" style="height: {{ h }}%;" title="{{ chart_day_labels[i] }} {{ chart_day_iso[i] }} — {{ v }} answer{{ 's' if v != 1 else '' }}"></div>
+                </div>
+                <span class="mini-chart-label">{{ chart_day_labels[i] }}</span>
+            </div>
+            {% endfor %}
+        </div>
+    </div>
+
+    <p class="analytics-study-alltime text-muted">
+        All time:
+        {{ study_summary.answers_all_time }} answers
+        {% if study_summary.answers_all_time > 0 %}
+        · {{ "%.0f"|format(study_summary.accuracy_all_time * 100) }}% accuracy
+        {% endif %}
+    </p>
+    {% if study_summary.answers_all_time > 0 %}
+    <p class="analytics-study-alltime-context text-muted">
+        Combined average: {{ "%.0f"|format(study_summary.accuracy_all_time * 100) }}% over {{ study_summary.answers_all_time }} answers.
+    </p>
+    {% endif %}
+
+    <p class="analytics-windows-legend text-muted">Week-over-week compares <strong>last 7 UTC calendar days</strong> to the <strong>7 calendar days before that</strong> (same as the bar strip).</p>
+
+    {% if study_wow.show_volume_line %}
+    <p class="analytics-study-wow" title="{{ study_wow.volume_title }}">
+        <span class="analytics-wow-label">Last 7 vs previous 7 · volume</span>
+        {% if study_wow.volume_arrow == 'new' %}
+        <span class="trend-up" title="{{ study_wow.volume_title }}">↑</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">{{ study_wow.volume_note }}</span>
+        {% elif study_wow.volume_mode == 'absolute' %}
+        {% if study_wow.volume_arrow == 'up' %}
+        <span class="trend-up" title="{{ study_wow.volume_title }}">↑</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">{{ study_wow.volume_delta_abs }} more answers vs previous week</span>
+        {% elif study_wow.volume_arrow == 'down' %}
+        <span class="trend-down" title="{{ study_wow.volume_title }}">↓</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">{{ -study_wow.volume_delta_abs }} fewer answers vs previous week</span>
+        {% else %}
+        <span class="trend-stable" title="{{ study_wow.volume_title }}">→</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">Same answer count as previous week</span>
+        {% endif %}
+        {% elif study_wow.volume_arrow == 'up' %}
+        <span class="trend-up" title="{{ study_wow.volume_title }}">↑</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">{{ "%.0f"|format(study_wow.volume_pct) }}% more answers</span>
+        {% elif study_wow.volume_arrow == 'down' %}
+        <span class="trend-down" title="{{ study_wow.volume_title }}">↓</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">{{ "%.0f"|format(-study_wow.volume_pct) }}% fewer answers</span>
+        {% else %}
+        <span class="trend-stable" title="{{ study_wow.volume_title }}">→</span>
+        <span class="analytics-wow-text" title="{{ study_wow.volume_title }}">Similar answer volume</span>
+        {% endif %}
+    </p>
+    {% endif %}
+
+    {% if study_wow.show_accuracy_line %}
+    <p class="analytics-study-wow analytics-study-wow-accuracy" title="{{ study_wow.accuracy_title }}">
+        <span class="analytics-wow-label">Last 7 vs previous 7 · accuracy (combined)</span>
+        {% if study_wow.accuracy_insufficient %}
+        <span class="trend-stable" title="{{ study_wow.accuracy_title }}">→</span>
+        <span class="analytics-wow-text" title="{{ study_wow.accuracy_title }}">Not enough data for accuracy trend</span>
+        {% elif study_wow.accuracy_arrow == 'up' %}
+        <span class="trend-up" title="{{ study_wow.accuracy_title }}">↑</span>
+        <span class="analytics-wow-text" title="{{ study_wow.accuracy_title }}">+{{ "%.1f"|format(study_wow.accuracy_pp) }} pts</span>
+        {% elif study_wow.accuracy_arrow == 'down' %}
+        <span class="trend-down" title="{{ study_wow.accuracy_title }}">↓</span>
+        <span class="analytics-wow-text" title="{{ study_wow.accuracy_title }}">{{ "%.1f"|format(study_wow.accuracy_pp) }} pts</span>
+        {% else %}
+        <span class="trend-stable" title="{{ study_wow.accuracy_title }}">→</span>
+        <span class="analytics-wow-text" title="{{ study_wow.accuracy_title }}">About the same</span>
+        {% endif %}
+    </p>
+    {% endif %}
+
+    <p class="analytics-accuracy-footnote text-muted">
+        Combined accuracy: correct ÷ total on graded recall and passive self-mark answers (same events as above).
+    </p>
+</section>
+
+<section class="analytics-section">
+    <h2>AI chat practice</h2>
+    <p class="analytics-section-note text-muted">Retry and hint metrics from vocabulary practice inside the AI tutor.</p>
+
+    <div class="analytics-summary">
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Themes with data</span>
+            <strong class="analytics-stat-value">{{ summary.themes_studied }}</strong>
+        </div>
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Chat attempts (30 days)</span>
+            <strong class="analytics-stat-value">{{ summary.total_attempts }}</strong>
+        </div>
+        <div class="analytics-stat-card {% if summary.avg_first_try < 0.5 %}analytics-stat-card-low{% elif summary.avg_first_try >= 0.8 %}analytics-stat-card-good{% endif %}">
+            <span class="analytics-stat-label">Chat first-try rate</span>
+            <strong class="analytics-stat-value">{{ "%.0f"|format(summary.avg_first_try * 100) }}%</strong>
+        </div>
+        <div class="analytics-stat-card">
+            <span class="analytics-stat-label">Chat hint usage</span>
+            <strong class="analytics-stat-value">{{ "%.0f"|format(summary.avg_reveal * 100) }}%</strong>
+        </div>
+    </div>
+
+    {% if overview_insight %}
+    <p class="analytics-summary-insight">{{ overview_insight }}</p>
+    {% endif %}
+</section>
+
+{% if recommendation %}
+<section class="analytics-section">
+    <h2>Needs attention</h2>
+
+    <div class="card analytics-recommendation">
+        <h3>{{ recommendation.theme.replace("_", " ").title() }}</h3>
+        {% if insight_line %}
+        <p class="analytics-insight">{{ insight_line }}</p>
+        {% endif %}
+        <p class="analytics-recommendation-metrics">
+            1st Try {{ "%.0f"|format(recommendation.first_try_30d * 100) }}%
+            <span aria-hidden="true">&middot;</span>
+            Hint usage {{ "%.0f"|format(recommendation.reveal_30d * 100) }}%
+            <span aria-hidden="true">&middot;</span>
+            Retry {{ "%.0f"|format(recommendation.retry_30d * 100) }}%
+        </p>
+        <div class="analytics-recommendation-actions">
+            <a class="btn btn-primary" href="/study">Mixed practice</a>
+            <a class="btn btn-secondary" href="/progress">View progress</a>
+        </div>
+    </div>
+</section>
+{% endif %}
+
+<section class="analytics-section">
+    <h2>By theme (AI chat)</h2>
+
+    {% if themes %}
+    <div class="analytics-table-wrapper">
+        <table class="analytics-table">
+            <thead>
+                <tr>
+                    <th>Theme</th>
+                    <th class="num" title="Exercises attempted">Attempts</th>
+                    <th class="num" title="Correct on first attempt">1st Try %</th>
+                    <th class="num" title="Average attempts before solving">Avg attempts</th>
+                    <th class="num" title="Translation revealed during retry">Hint usage</th>
+                    <th class="num" title="Exercises requiring retry">Retry %</th>
+                    <th title="Trend compares last 7 days with last 30 days">Trend</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for t in themes %}
+                <tr class="{% if t.needs_attention_rank == 1 %}highlight{% endif %}">
+                    <td>{{ t.theme.replace("_", " ").title() }}</td>
+                    <td class="num">{{ t.attempts_30d }}</td>
+                    <td class="num">{{ "%.0f"|format(t.first_try_30d * 100) }}%</td>
+                    <td class="num">
+                        {% if t.avg_attempts_30d is not none %}
+                        {{ "%.1f"|format(t.avg_attempts_30d) }}
+                        {% else %}
+                        —
+                        {% endif %}
+                    </td>
+                    <td class="num">{{ "%.0f"|format(t.reveal_30d * 100) }}%</td>
+                    <td class="num">{{ "%.0f"|format(t.retry_30d * 100) }}%</td>
+                    <td class="trend-cell">
+                        <div>{{ trend_badge("1st try", t.trend_first_try) }}</div>
+                        <div>{{ trend_badge("Hints", t.trend_reveal) }}</div>
+                        <div>{{ trend_badge("Retry", t.trend_retry) }}</div>
+                        <div>{{ trend_badge("Composite", t.trend_composite) }}</div>
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% if themes|length == 1 %}
+    <p class="analytics-sparse-note">Study more themes to unlock richer analytics insights.</p>
+    {% endif %}
+    {% else %}
+    <div class="card analytics-empty-state">
+        <p>No AI chat theme data yet.</p>
+        <p>Use the tutor’s vocabulary drills, or open <strong>Practice</strong> (mixed session) — session stats are in the section above.</p>
+        <a class="btn btn-primary" href="/study">Mixed practice</a>
+    </div>
+    {% endif %}
+</section>
+
+{% endblock %}

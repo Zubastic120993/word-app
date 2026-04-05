@@ -1,0 +1,742 @@
+{% extends "base.html" %}
+
+{% block title %}Data Management - Word App{% endblock %}
+
+{% block head %}
+<style>
+    .section {
+        margin-bottom: 2rem;
+        padding-bottom: 2rem;
+        border-bottom: 1px solid #eee;
+    }
+    
+    .section:last-child {
+        border-bottom: none;
+        margin-bottom: 0;
+        padding-bottom: 0;
+    }
+    
+    .section h3 {
+        margin-bottom: 1rem;
+        color: #2c3e50;
+    }
+    
+    .section p {
+        margin-bottom: 1rem;
+        color: #666;
+    }
+    
+    .warning-box {
+        background: #fff3cd;
+        border: 2px solid #ffc107;
+        border-radius: 8px;
+        padding: 1.5rem;
+        margin-bottom: 1.5rem;
+    }
+    
+    .warning-box h4 {
+        color: #856404;
+        margin-bottom: 0.5rem;
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+    
+    .warning-box p {
+        color: #856404;
+        margin-bottom: 0;
+    }
+    
+    .file-input-wrapper {
+        margin-bottom: 1rem;
+    }
+    
+    .file-input-wrapper input[type="file"] {
+        display: block;
+        width: 100%;
+        padding: 0.75rem;
+        border: 2px dashed #ccc;
+        border-radius: 4px;
+        background: #fafafa;
+        cursor: pointer;
+    }
+    
+    .file-input-wrapper input[type="file"]:hover {
+        border-color: #3498db;
+        background: #f0f7ff;
+    }
+    
+    .file-selected {
+        margin-top: 0.5rem;
+        padding: 0.5rem;
+        background: #e8f5e9;
+        border-radius: 4px;
+        color: #2e7d32;
+        font-size: 0.875rem;
+        display: none;
+    }
+    
+    .file-selected.show {
+        display: block;
+    }
+    
+    .checkbox-wrapper {
+        display: flex;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-bottom: 1.5rem;
+        padding: 1rem;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    
+    .checkbox-wrapper input[type="checkbox"] {
+        margin-top: 0.25rem;
+        width: 18px;
+        height: 18px;
+        cursor: pointer;
+    }
+    
+    .checkbox-wrapper label {
+        cursor: pointer;
+        color: #721c24;
+        font-weight: 500;
+    }
+    
+    .stats {
+        display: flex;
+        gap: 2rem;
+        margin-top: 1rem;
+        padding: 1rem;
+        background: #f8f9fa;
+        border-radius: 4px;
+    }
+    
+    .stat-item {
+        text-align: center;
+    }
+    
+    .stat-value {
+        font-size: 1.5rem;
+        font-weight: bold;
+        color: #2c3e50;
+    }
+    
+    .stat-label {
+        font-size: 0.875rem;
+        color: #666;
+    }
+    
+    .result-message {
+        margin-top: 1rem;
+        padding: 1rem;
+        border-radius: 4px;
+        display: none;
+    }
+    
+    .result-message.show {
+        display: block;
+    }
+    
+    .result-message.success {
+        background: #d4edda;
+        border: 1px solid #c3e6cb;
+        color: #155724;
+    }
+    
+    .result-message.error {
+        background: #f8d7da;
+        border: 1px solid #f5c6cb;
+        color: #721c24;
+    }
+    
+    .loading {
+        opacity: 0.5;
+        pointer-events: none;
+    }
+</style>
+{% endblock %}
+
+{% block content %}
+<h2>Data Management</h2>
+
+<!-- Manual Backup Section -->
+<div class="section">
+    <h3>💾 Create Backup Now</h3>
+    <p>Create a full backup of your database (vocabulary, progress, and scores) in <code>data/backups/</code>. Use this before big changes or when you want a snapshot you can restore later.</p>
+    <button type="button" id="backupBtn" class="btn btn-primary">
+        Create backup now
+    </button>
+    <div id="backupResult" class="result-message"></div>
+</div>
+
+<!-- Export Section -->
+<div class="section">
+    <h3>📤 Export Data</h3>
+    <p>Download all your learning data as a JSON file. This includes your vocabulary, progress, and session history.</p>
+    <p>Use this to backup your data or transfer it to another device.</p>
+    
+    <a href="/api/export" class="btn btn-primary" download>
+        Download Export
+    </a>
+    
+    <div class="stats">
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.units }}</div>
+            <div class="stat-label">Learning Units</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.sessions }}</div>
+            <div class="stat-label">Sessions</div>
+        </div>
+        <div class="stat-item">
+            <div class="stat-value">{{ stats.progress }}</div>
+            <div class="stat-label">Progress Records</div>
+        </div>
+    </div>
+</div>
+
+<!-- Import Section -->
+<div class="section">
+    <h3>📥 Import Data</h3>
+    <p>Restore data from a previously exported JSON file.</p>
+    
+    <div class="warning-box">
+        <h4>⚠️ Warning: Destructive Operation</h4>
+        <p>
+            Importing will <strong>permanently delete ALL existing data</strong> 
+            and replace it with the imported data. A backup will be created automatically 
+            before import, but please ensure you have a recent export if needed.
+        </p>
+    </div>
+    
+    <form id="importForm" enctype="multipart/form-data">
+        <div class="file-input-wrapper">
+            <input type="file" id="importFile" name="file" accept=".json" required>
+            <div id="fileSelected" class="file-selected"></div>
+        </div>
+        
+        <div class="checkbox-wrapper">
+            <input type="checkbox" id="confirmImport" name="confirm">
+            <label for="confirmImport">
+                I understand that importing will <strong>DELETE ALL my existing data</strong> 
+                and replace it with the contents of the uploaded file.
+            </label>
+        </div>
+        
+        <button type="submit" id="importBtn" class="btn btn-danger" disabled title="Check the confirmation checkbox to enable import">
+            Import Data
+        </button>
+    </form>
+    
+    <div id="importResult" class="result-message"></div>
+</div>
+
+<!-- Vocabulary Groups Management -->
+<div class="section">
+    <h3>📁 Vocabulary Groups</h3>
+    <p>Organize your vocabularies into groups for better management in study mode.</p>
+    
+    <!-- Create New Group -->
+    <div style="background: #f8f9fa; padding: 1rem; border-radius: 4px; margin-bottom: 1.5rem;">
+        <h4 style="margin-bottom: 1rem;">Create New Group</h4>
+        <form id="createGroupForm" style="display: flex; gap: 0.5rem; align-items: flex-start; flex-wrap: wrap;">
+            <input type="text" id="newGroupName" placeholder="Group name (e.g., Rozmówki)" required style="flex: 1; min-width: 200px; padding: 0.5rem;">
+            <input type="text" id="newGroupDescription" placeholder="Description (optional)" style="flex: 2; min-width: 250px; padding: 0.5rem;">
+            <button type="submit" class="btn btn-primary" style="white-space: nowrap;">Create Group</button>
+        </form>
+        <div id="createGroupResult" class="result-message" style="margin-top: 0.5rem;"></div>
+    </div>
+    
+    <!-- Groups List -->
+    <div id="groupsList" style="margin-top: 1.5rem;">
+        <p class="text-muted">Loading groups...</p>
+    </div>
+</div>
+
+<!-- Backup Info -->
+<div class="section">
+    <h3>🧠 Context Sentence Backfill</h3>
+    <p>
+        Words without a context sentence fall back to regular recall mode instead of cloze.
+        Click once — runs automatically until all words are filled.
+        You can stop and resume anytime; progress is saved per word.
+    </p>
+    <p style="font-size: 0.88rem; color: #888; margin-top: -0.25rem;">
+        Requires AI (OpenAI or Ollama) to be running. Each batch of 50 takes ~10–60 seconds.
+        Already-filled words are never touched.
+    </p>
+    <div style="display: flex; gap: 0.75rem; align-items: center; flex-wrap: wrap;">
+        <button type="button" id="backfillBtn" class="btn btn-primary">Run Full Backfill</button>
+        <button type="button" id="backfillStopBtn" class="btn btn-secondary" style="display:none;">Stop</button>
+    </div>
+    <div id="backfillProgress" style="display:none; margin-top: 0.75rem; font-size: 0.88rem; color: #555; line-height: 1.7;">
+        <div id="backfillStatus"></div>
+        <div id="backfillStats"></div>
+    </div>
+    <div id="backfillResult" class="result-message"></div>
+</div>
+
+<div class="section">
+    <h3>💾 About Backups</h3>
+    <p>
+        This app follows a <strong>local-first philosophy</strong>. Your data stays on your device.
+    </p>
+    <ul style="margin-left: 1.5rem; color: #666;">
+        <li>Use <strong>Create backup now</strong> above to save a full snapshot (data + scores) anytime</li>
+        <li>Automatic backups are created at app startup and before each import</li>
+        <li>Backups are stored in the <code>data/backups/</code> folder</li>
+        <li>We recommend exporting or creating a backup regularly for additional safety</li>
+        <li>Export files are human-readable JSON for transparency</li>
+    </ul>
+</div>
+{% endblock %}
+
+{% block scripts %}
+<script>
+    const importForm = document.getElementById('importForm');
+    const importFile = document.getElementById('importFile');
+    const confirmCheckbox = document.getElementById('confirmImport');
+    const importBtn = document.getElementById('importBtn');
+    const resultDiv = document.getElementById('importResult');
+    const fileSelectedDiv = document.getElementById('fileSelected');
+    
+    // Vocabulary groups management
+    let allGroups = [];
+    let allVocabularies = [];
+    
+    // Show file selection feedback
+    importFile.addEventListener('change', function() {
+        if (this.files.length > 0) {
+            const file = this.files[0];
+            const size = (file.size / 1024).toFixed(1);
+            fileSelectedDiv.textContent = `📄 Selected: ${file.name} (${size} KB)`;
+            fileSelectedDiv.classList.add('show');
+        } else {
+            fileSelectedDiv.classList.remove('show');
+        }
+    });
+    
+    // Enable/disable import button based on checkbox
+    confirmCheckbox.addEventListener('change', function() {
+        importBtn.disabled = !this.checked;
+    });
+    
+    // Handle form submission
+    importForm.addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        if (!confirmCheckbox.checked) {
+            showResult('Please confirm that you understand the import will delete existing data.', 'error');
+            return;
+        }
+        
+        if (!importFile.files.length) {
+            showResult('Please select a file to import.', 'error');
+            return;
+        }
+        
+        // Final confirmation dialog
+        const confirmed = confirm(
+            '⚠️ FINAL WARNING ⚠️\n\n' +
+            'This will permanently delete ALL your existing data and replace it with the imported file.\n\n' +
+            'Are you absolutely sure you want to continue?'
+        );
+        
+        if (!confirmed) {
+            return;
+        }
+        
+        // Show loading state
+        importBtn.disabled = true;
+        importBtn.textContent = 'Importing...';
+        importForm.classList.add('loading');
+        resultDiv.classList.remove('show');
+        
+        const formData = new FormData();
+        formData.append('file', importFile.files[0]);
+        
+        try {
+            const response = await fetch('/api/import?confirm=true', {
+                method: 'POST',
+                body: formData
+            });
+            
+            const data = await response.json();
+            
+            if (response.ok && data.success) {
+                showResult(
+                    `✅ Import successful! Imported ${data.units_imported} units and ${data.sessions_imported} sessions. Page will refresh...`,
+                    'success'
+                );
+                // Reload page to update stats
+                setTimeout(() => location.reload(), 2000);
+            } else {
+                showResult(
+                    `❌ Import failed: ${data.detail || data.message || 'Unknown error'}`,
+                    'error'
+                );
+            }
+        } catch (error) {
+            showResult(`❌ Import failed: ${error.message}`, 'error');
+        } finally {
+            importBtn.disabled = !confirmCheckbox.checked;
+            importBtn.textContent = 'Import Data';
+            importForm.classList.remove('loading');
+        }
+    });
+    
+    function showResult(message, type) {
+        resultDiv.textContent = message;
+        resultDiv.className = `result-message show ${type}`;
+        // Scroll to result
+        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    }
+
+    // Context backfill — full auto-loop
+    (function () {
+        const MAX_BATCHES = 200;
+        let isRunning = false;
+        let shouldStop = false;
+
+        const runBtn  = document.getElementById('backfillBtn');
+        const stopBtn = document.getElementById('backfillStopBtn');
+        const progressEl = document.getElementById('backfillProgress');
+        const statusEl   = document.getElementById('backfillStatus');
+        const statsEl    = document.getElementById('backfillStats');
+        const resultDiv  = document.getElementById('backfillResult');
+
+        function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+        function setRunning(running) {
+            isRunning = running;
+            runBtn.disabled = running;
+            stopBtn.style.display = running ? 'inline-block' : 'none';
+            progressEl.style.display = running ? 'block' : 'block'; // keep visible after stop too
+        }
+
+        stopBtn.addEventListener('click', function () {
+            shouldStop = true;
+            stopBtn.disabled = true;
+            stopBtn.textContent = 'Stopping…';
+        });
+
+        runBtn.addEventListener('click', async function () {
+            if (isRunning) return;
+
+            shouldStop = false;
+            stopBtn.disabled = false;
+            stopBtn.textContent = 'Stop';
+            resultDiv.className = 'result-message';
+            resultDiv.textContent = '';
+            progressEl.style.display = 'block';
+            setRunning(true);
+
+            let batch = 0;
+            let totalFilled = 0;
+            let lastRemaining = null;
+
+            try {
+                while (batch < MAX_BATCHES) {
+                    if (shouldStop) break;
+
+                    const resp = await fetch('/api/admin/backfill-context?limit=50', { method: 'POST' });
+                    if (!resp.ok) {
+                        const err = await resp.json().catch(() => ({}));
+                        throw new Error(err.detail || 'Server error');
+                    }
+                    const data = await resp.json();
+
+                    batch += 1;
+                    totalFilled += data.succeeded;
+                    lastRemaining = data.remaining;
+
+                    statusEl.textContent = `Running… batch ${batch}`;
+                    statsEl.textContent  = `Filled: ${totalFilled} · Remaining: ${lastRemaining}`;
+
+                    if (lastRemaining === 0) break;
+                    await sleep(500);
+                }
+            } catch (err) {
+                resultDiv.textContent = '❌ ' + err.message;
+                resultDiv.className = 'result-message show error';
+                setRunning(false);
+                return;
+            }
+
+            setRunning(false);
+
+            if (lastRemaining === 0) {
+                statusEl.textContent = '✅ Complete';
+                statsEl.textContent  = `Filled: ${totalFilled} · Remaining: 0 — all words covered.`;
+                resultDiv.textContent = '';
+            } else if (shouldStop) {
+                statusEl.textContent = '⏹ Stopped — you can resume anytime.';
+                statsEl.textContent  = `Filled this run: ${totalFilled} · Remaining: ${lastRemaining}`;
+            } else {
+                // hit MAX_BATCHES
+                statusEl.textContent = '⚠️ Reached batch limit.';
+                statsEl.textContent  = `Filled: ${totalFilled} · Remaining: ${lastRemaining} — click Run again to continue.`;
+            }
+        });
+    }());
+
+    // Manual backup button
+    document.getElementById('backupBtn').addEventListener('click', async function() {
+        const btn = this;
+        const resultDiv = document.getElementById('backupResult');
+        btn.disabled = true;
+        btn.textContent = 'Creating backup...';
+        resultDiv.classList.remove('show');
+        try {
+            const response = await fetch('/api/backup', { method: 'POST' });
+            const data = await response.json();
+            if (response.ok && data.success) {
+                resultDiv.textContent = '✅ Backup created: ' + data.filename;
+                resultDiv.className = 'result-message show success';
+            } else {
+                resultDiv.textContent = '❌ ' + (data.detail || data.message || 'Backup failed');
+                resultDiv.className = 'result-message show error';
+            }
+        } catch (error) {
+            resultDiv.textContent = '❌ ' + error.message;
+            resultDiv.className = 'result-message show error';
+        }
+        resultDiv.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        btn.disabled = false;
+        btn.textContent = 'Create backup now';
+    });
+    
+    // ======================================
+    // Vocabulary Groups Management
+    // ======================================
+    
+    async function loadGroupsAndVocabularies() {
+        try {
+            const [groupsResp, vocabsResp] = await Promise.all([
+                fetch('/api/vocabulary-groups'),
+                fetch('/api/vocabularies')
+            ]);
+            
+            if (!groupsResp.ok || !vocabsResp.ok) {
+                throw new Error('Failed to load data');
+            }
+            
+            allGroups = await groupsResp.json();
+            allVocabularies = await vocabsResp.json();
+            
+            renderGroups();
+        } catch (error) {
+            document.getElementById('groupsList').innerHTML = 
+                `<p class="text-muted">Error loading groups: ${error.message}</p>`;
+        }
+    }
+    
+    function renderGroups() {
+        const container = document.getElementById('groupsList');
+        
+        if (allGroups.length === 0) {
+            container.innerHTML = '<p class="text-muted">No groups created yet.</p>';
+            return;
+        }
+        
+        // Build vocabulary lookup by group_id
+        const vocabsByGroup = {};
+        allVocabularies.forEach(vocab => {
+            const groupId = vocab.group_id || null;
+            if (!vocabsByGroup[groupId]) {
+                vocabsByGroup[groupId] = [];
+            }
+            vocabsByGroup[groupId].push(vocab);
+        });
+        
+        let html = '<div style="display: flex; flex-direction: column; gap: 1rem;">';
+        
+        // Show each group
+        allGroups.forEach(group => {
+            const groupVocabs = vocabsByGroup[group.id] || [];
+            const isEmpty = groupVocabs.length === 0;
+            
+            html += `
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 1rem; background: white;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <div>
+                            <strong style="font-size: 1.1rem;">${escapeHtml(group.name)}</strong>
+                            ${isEmpty ? ' <span style="color: #999; font-size: 0.875rem;">(Empty)</span>' : ''}
+                        </div>
+                        <div style="color: #666; font-size: 0.875rem;">
+                            ${group.vocabulary_count} vocabularies, ${group.total_units} units
+                        </div>
+                    </div>
+                    ${group.description ? `<p style="color: #666; margin-bottom: 0.5rem; font-size: 0.875rem;">${escapeHtml(group.description)}</p>` : ''}
+                    
+                    ${groupVocabs.length > 0 ? `
+                        <details style="margin-top: 0.5rem;">
+                            <summary style="cursor: pointer; color: #3498db; font-size: 0.875rem;">
+                                Show vocabularies (${groupVocabs.length})
+                            </summary>
+                            <div style="margin-top: 0.5rem; padding-left: 1rem;">
+                                ${groupVocabs.map(v => `
+                                    <div style="padding: 0.25rem 0; font-size: 0.875rem;">
+                                        📄 ${escapeHtml(v.name)}
+                                        <button onclick="unassignVocabulary(${v.id}, '${escapeHtml(v.name)}')" 
+                                                style="margin-left: 0.5rem; padding: 0.125rem 0.5rem; font-size: 0.75rem; border: 1px solid #ccc; background: white; border-radius: 3px; cursor: pointer;"
+                                                title="Remove from group">✕</button>
+                                    </div>
+                                `).join('')}
+                            </div>
+                        </details>
+                    ` : ''}
+                    
+                    <div style="margin-top: 0.75rem; padding-top: 0.75rem; border-top: 1px solid #eee;">
+                        <select id="vocab-select-${group.id}" style="padding: 0.375rem; margin-right: 0.5rem; font-size: 0.875rem;">
+                            <option value="">Select vocabulary to add...</option>
+                            ${(vocabsByGroup[null] || []).map(v => 
+                                `<option value="${v.id}">${escapeHtml(v.name)}</option>`
+                            ).join('')}
+                        </select>
+                        <button onclick="assignVocabularyToGroup(${group.id}, '${escapeHtml(group.name)}')" 
+                                class="btn btn-primary" 
+                                style="padding: 0.375rem 0.75rem; font-size: 0.875rem;">
+                            Add to Group
+                        </button>
+                    </div>
+                </div>
+            `;
+        });
+        
+        // Show ungrouped vocabularies
+        const ungrouped = vocabsByGroup[null] || [];
+        if (ungrouped.length > 0) {
+            html += `
+                <div style="border: 1px solid #ddd; border-radius: 8px; padding: 1rem; background: #f8f9fa;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 0.5rem;">
+                        <strong style="font-size: 1.1rem;">Ungrouped Vocabularies</strong>
+                        <div style="color: #666; font-size: 0.875rem;">${ungrouped.length} vocabularies</div>
+                    </div>
+                    <details style="margin-top: 0.5rem;">
+                        <summary style="cursor: pointer; color: #3498db; font-size: 0.875rem;">
+                            Show vocabularies (${ungrouped.length})
+                        </summary>
+                        <div style="margin-top: 0.5rem; padding-left: 1rem;">
+                            ${ungrouped.map(v => `
+                                <div style="padding: 0.25rem 0; font-size: 0.875rem;">📄 ${escapeHtml(v.name)}</div>
+                            `).join('')}
+                        </div>
+                    </details>
+                </div>
+            `;
+        }
+        
+        html += '</div>';
+        container.innerHTML = html;
+    }
+    
+    async function assignVocabularyToGroup(groupId, groupName) {
+        const select = document.getElementById(`vocab-select-${groupId}`);
+        const vocabularyId = parseInt(select.value);
+        
+        if (!vocabularyId) {
+            alert('Please select a vocabulary');
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/vocabularies/${vocabularyId}/group?group_id=${groupId}`, {
+                method: 'PUT',
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to assign vocabulary');
+            }
+            
+            // Reload groups
+            await loadGroupsAndVocabularies();
+        } catch (error) {
+            alert('Error assigning vocabulary: ' + error.message);
+        }
+    }
+    
+    async function unassignVocabulary(vocabularyId, vocabularyName) {
+        if (!confirm(`Remove "${vocabularyName}" from this group?`)) {
+            return;
+        }
+        
+        try {
+            const response = await fetch(`/api/vocabularies/${vocabularyId}/group?group_id=`, {
+                method: 'PUT',
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to unassign vocabulary');
+            }
+            
+            // Reload groups
+            await loadGroupsAndVocabularies();
+        } catch (error) {
+            alert('Error unassigning vocabulary: ' + error.message);
+        }
+    }
+    
+    // Create group form handler
+    document.getElementById('createGroupForm').addEventListener('submit', async function(e) {
+        e.preventDefault();
+        
+        const nameInput = document.getElementById('newGroupName');
+        const descInput = document.getElementById('newGroupDescription');
+        const resultDiv = document.getElementById('createGroupResult');
+        const name = nameInput.value.trim();
+        const description = descInput.value.trim();
+        
+        if (!name) {
+            showGroupResult('Please enter a group name', 'error');
+            return;
+        }
+        
+        try {
+            const params = new URLSearchParams({ name });
+            if (description) {
+                params.append('description', description);
+            }
+            
+            const response = await fetch('/api/vocabulary-groups?' + params.toString(), {
+                method: 'POST',
+            });
+            
+            if (!response.ok) {
+                const error = await response.json();
+                throw new Error(error.detail || 'Failed to create group');
+            }
+            
+            showGroupResult(`✅ Group "${name}" created successfully!`, 'success');
+            nameInput.value = '';
+            descInput.value = '';
+            
+            // Reload groups
+            await loadGroupsAndVocabularies();
+        } catch (error) {
+            showGroupResult('❌ Error: ' + error.message, 'error');
+        }
+    });
+    
+    function showGroupResult(message, type) {
+        const resultDiv = document.getElementById('createGroupResult');
+        resultDiv.textContent = message;
+        resultDiv.className = `result-message show ${type}`;
+        setTimeout(() => {
+            resultDiv.classList.remove('show');
+        }, 5000);
+    }
+    
+    function escapeHtml(text) {
+        const div = document.createElement('div');
+        div.textContent = text;
+        return div.innerHTML;
+    }
+    
+    // Load groups on page load
+    loadGroupsAndVocabularies();
+</script>
+{% endblock %}

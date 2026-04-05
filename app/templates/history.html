@@ -1,0 +1,281 @@
+{% extends "base.html" %}
+
+{% block title %}Session History - Word App{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Session History</h1>
+    <p class="page-subtitle">Review your past study sessions</p>
+</div>
+
+<!-- Summary Cards -->
+<div class="summary-cards">
+    <div class="summary-card">
+        <div class="summary-icon">🔥</div>
+        <div class="summary-content">
+            <div class="summary-value">{{ summary.study_streak_days }}</div>
+            <div class="summary-label">Day Streak</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon">📚</div>
+        <div class="summary-content">
+            <div class="summary-value">{{ summary.words_this_week }}</div>
+            <div class="summary-label">Words This Week</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon">🎯</div>
+        <div class="summary-content">
+            <div class="summary-value">
+                {% if summary.recall_accuracy_7d is not none %}
+                    {{ summary.recall_accuracy_7d }}%
+                {% else %}
+                    —
+                {% endif %}
+            </div>
+            <div class="summary-label">Recall Accuracy (7d)</div>
+        </div>
+    </div>
+    <div class="summary-card">
+        <div class="summary-icon">⚠️</div>
+        <div class="summary-content">
+            <div class="summary-value">{{ summary.weak_words_count }}</div>
+            <div class="summary-label">Weak Words</div>
+        </div>
+    </div>
+</div>
+
+{% if sessions %}
+<div class="card">
+    <table class="data-table">
+        <thead>
+            <tr>
+                <th>Date</th>
+                <th>Mode</th>
+                <th>Vocabularies</th>
+                <th style="text-align: center;">Accuracy</th>
+                <th style="text-align: center;">Status</th>
+                <th style="text-align: right;">Details</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for session in sessions %}
+            {% set answered = session.correct_count + session.partial_count + session.failed_count %}
+            {% set accuracy_pct = (session.correct_count / answered * 100) if answered > 0 else 0 %}
+            {% if accuracy_pct >= 80 %}
+                {% set accuracy_class = 'accuracy-high' %}
+            {% elif accuracy_pct >= 60 %}
+                {% set accuracy_class = 'accuracy-medium' %}
+            {% else %}
+                {% set accuracy_class = 'accuracy-low' %}
+            {% endif %}
+            <tr>
+                <td>
+                    <div class="session-date">{{ session.date.strftime('%Y-%m-%d') }}</div>
+                    <div class="session-time">{{ session.date.strftime('%H:%M') }}</div>
+                </td>
+                <td>
+                    <span class="mode-badge-small {{ session.mode }}">
+                        {% if session.mode == 'recall' %}Recall (Visual)
+                        {% elif session.mode == 'recall_audio' %}Recall (Audio)
+                        {% else %}Passive{% endif %}
+                    </span>
+                </td>
+                <td>
+                    <div class="vocab-list">
+                        {% for vocab in session.vocabularies[:3] %}
+                            <span class="vocab-item">{{ vocab.name }} ({{ vocab.count }})</span>
+                        {% endfor %}
+                        {% if session.vocabularies|length > 3 %}
+                            <span class="vocab-more">+{{ session.vocabularies|length - 3 }} more</span>
+                        {% endif %}
+                    </div>
+                </td>
+                <td style="text-align: center;">
+                    <span class="accuracy-badge {{ accuracy_class }}">
+                        {{ "%.0f"|format(accuracy_pct) }}% ({{ session.correct_count }}/{{ answered }})
+                    </span>
+                </td>
+                <td style="text-align: center;">
+                    <span class="status-badge {{ session.status }}">
+                        {% if session.status == 'completed' %}✓{% elif session.status == 'abandoned' %}⚠{% else %}⋯{% endif %}
+                    </span>
+                </td>
+                <td style="text-align: right;">
+                    <a href="/history/{{ session.session_id }}" class="btn-small btn-secondary">View</a>
+                </td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</div>
+
+<!-- Pagination -->
+{% if total > limit %}
+<div class="pagination">
+    {% if offset > 0 %}
+    <a href="/history?offset={{ offset - limit }}&limit={{ limit }}" class="btn-small btn-secondary">← Prev</a>
+    {% endif %}
+    
+    <span class="page-info">
+        Showing {{ offset + 1 }} - {{ [offset + limit, total]|min }} of {{ total }}
+    </span>
+    
+    {% if offset + limit < total %}
+    <a href="/history?offset={{ offset + limit }}&limit={{ limit }}" class="btn-small btn-secondary">Next →</a>
+    {% endif %}
+</div>
+{% endif %}
+
+{% else %}
+<div class="card">
+    <p class="text-muted text-center">No session history yet. Complete a study session to see it here!</p>
+    <p class="text-center mt-1">
+        <a href="/study" class="btn">Practice again</a>
+    </p>
+</div>
+{% endif %}
+
+<style>
+/* Summary Cards */
+.summary-cards {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+    gap: 1rem;
+    margin-bottom: 2rem;
+}
+
+.summary-card {
+    background: #fff;
+    border: 1px solid #e5e5e5;
+    border-radius: 8px;
+    padding: 1.25rem;
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+}
+
+.summary-icon {
+    font-size: 2rem;
+    flex-shrink: 0;
+}
+
+.summary-content {
+    flex: 1;
+}
+
+.summary-value {
+    font-size: 1.75rem;
+    font-weight: 700;
+    color: #2c2c2c;
+    line-height: 1.2;
+}
+
+.summary-label {
+    font-size: 0.8rem;
+    color: #666;
+    margin-top: 0.25rem;
+}
+
+/* History Table */
+.session-date {
+    font-weight: 500;
+    color: #2c2c2c;
+}
+
+.session-time {
+    font-size: 0.85rem;
+    color: #666;
+    margin-top: 0.1rem;
+}
+
+.mode-badge-small {
+    display: inline-block;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.75rem;
+    font-weight: 500;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.mode-badge-small.passive {
+    background: #e8f4fd;
+    color: #1565c0;
+}
+
+.mode-badge-small.recall,
+.mode-badge-small.recall_audio {
+    background: #f3e5f5;
+    color: #7b1fa2;
+}
+
+.vocab-list {
+    display: flex;
+    flex-direction: column;
+    gap: 0.15rem;
+}
+
+.vocab-item {
+    font-size: 0.85rem;
+    color: #3a3a3a;
+}
+
+.vocab-more {
+    font-size: 0.75rem;
+    color: #888;
+    font-style: italic;
+}
+
+.accuracy-badge {
+    display: inline-block;
+    padding: 0.3rem 0.6rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    border-radius: 4px;
+    white-space: nowrap;
+}
+
+.accuracy-badge.accuracy-high {
+    background: #e8f5e9;
+    color: #2e7d32;
+}
+
+.accuracy-badge.accuracy-medium {
+    background: #fff8e1;
+    color: #f57c00;
+}
+
+.accuracy-badge.accuracy-low {
+    background: #ffebee;
+    color: #c62828;
+}
+
+.status-badge {
+    display: inline-block;
+    font-size: 1.1rem;
+}
+
+.status-badge.completed {
+    color: #2e7d32;
+}
+
+.status-badge.abandoned {
+    color: #f57c00;
+}
+
+.status-badge.active {
+    color: #1565c0;
+}
+
+/* Table improvements */
+.data-table td {
+    vertical-align: top;
+    padding: 0.75rem;
+}
+
+.data-table th {
+    padding: 0.75rem;
+}
+</style>
+{% endblock %}

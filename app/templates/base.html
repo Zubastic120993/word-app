@@ -1,0 +1,50 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Word App{% endblock %}</title>
+    <link rel="manifest" href="/static/manifest.json">
+    <meta name="theme-color" content="#3a3a3a">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-title" content="Word App">
+    <link rel="apple-touch-icon" href="/static/icon-192.png">
+    <link rel="stylesheet" href="/static/style.css?v={{ cache_bust }}">
+    {% block head %}{% endblock %}
+</head>
+<body>
+    {# Resolve client role once; defaults to "mac" for safety #}
+    {% set client_role = request.state.client_role | default("mac") %}
+
+    <nav class="nav-with-status">
+        <ul>
+            {% if client_role != "ipad" %}
+            <li><a href="/" {% if active == 'home' %}class="active"{% endif %}>Home</a></li>
+            {% endif %}
+            <li><a href="/study" {% if active == 'study' %}class="active"{% endif %}>Practice</a></li>
+            <li><a href="/progress" {% if active == 'progress' %}class="active"{% endif %}>Progress</a></li>
+            {% if client_role != "ipad" %}
+            <li><a href="/analytics/dashboard" {% if active == 'analytics' %}class="active"{% endif %}>Analytics</a></li>
+            <li class="nav-separator"></li>
+            <li><a href="/upload" {% if active == 'upload' %}class="active"{% endif %}>Upload</a></li>
+            <li><a href="/vocabulary" {% if active == 'vocabulary' %}class="active"{% endif %}>Vocabulary</a></li>
+            <li><a href="/history" {% if active == 'history' %}class="active"{% endif %}>History</a></li>
+            <li><a href="/chat" {% if active == 'chat' %}class="active"{% endif %}>AI Practice</a></li>
+            <li><a href="/data" {% if active == 'data' %}class="active"{% endif %}>Data</a></li>
+            {% endif %}
+        </ul>
+        {% if active == 'study' %}
+        <div id="connection-status" class="nav-connection-status connection-status connected {% if not session %}hidden{% endif %}" title="Last server contact just now">
+            <span class="connection-dot"></span>
+            <span class="connection-label">Connected</span>
+        </div>
+        {% endif %}
+    </nav>
+
+    <div class="container {% block container_class %}{% endblock %}">
+        {% block content %}{% endblock %}
+    </div>
+
+    {% block scripts %}{% endblock %}
+</body>
+</html>
