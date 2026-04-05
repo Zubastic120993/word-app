@@ -5,7 +5,7 @@ import random
 import re
 import unicodedata
 from collections import Counter, defaultdict, deque
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime, timedelta
 from enum import Enum
 from typing import Any, Literal, Optional
@@ -1322,7 +1322,7 @@ class SessionService:
             session_difficulty_signal=round(difficulty_signal, 4),
         )
         self._last_recall_controller_snapshot = snapshot
-        logger.info(
+        logger.debug(
             "Recall controller mode=%s recall_depth=%.4f weak_ratio=%.4f due_ratio=%.4f reinforcement_depth_bias=%d session_difficulty_signal=%.4f",
             snapshot.mode,
             snapshot.recall_depth,
@@ -1427,7 +1427,7 @@ class SessionService:
             balanced_never_seen_mix=balanced_never_seen_mix,
             new_words_focus=new_words_focus,
         )
-        logger.info(
+        logger.debug(
             "_build_selection_request trace: new_words_focus=%s source_pdfs=%s "
             "lesson_vocab_ids=%s theme_vocab_ids=%s session_size=%s",
             request.new_words_focus,
@@ -1760,7 +1760,10 @@ class SessionService:
                 # Home "new words": passive new bucket only; refill must not pull weak/review.
                 # Still run readiness gate so session_reason is surfaced in the UI.
                 from app.services.daily_stats import get_daily_dashboard_stats
-                _ds_nwf = get_daily_dashboard_stats(self.db)
+                if hasattr(self.db, "query"):
+                    _ds_nwf = get_daily_dashboard_stats(self.db)
+                else:
+                    _ds_nwf = {}
                 _, _nwf_gate = _compute_new_words_readiness(
                     words_introduced_today=_ds_nwf.get("words_introduced_today", 0),
                     max_new_per_day=_ds_nwf.get("max_new_per_day", 60),
@@ -1775,7 +1778,10 @@ class SessionService:
             else:
                 # Adaptive readiness gate: may suppress new words and shift budget to weak/review
                 from app.services.daily_stats import get_daily_dashboard_stats
-                _ds = get_daily_dashboard_stats(self.db)
+                if hasattr(self.db, "query"):
+                    _ds = get_daily_dashboard_stats(self.db)
+                else:
+                    _ds = {}
                 new_pct, _gate_reason = _compute_new_words_readiness(
                     words_introduced_today=_ds.get("words_introduced_today", 0),
                     max_new_per_day=_ds.get("max_new_per_day", 60),
@@ -1844,7 +1850,7 @@ class SessionService:
                 )
                 selected.extend(fill_selected)
                 if strict_new_refill and len(fill_selected) < remaining_needed:
-                    logger.info(
+                    logger.debug(
                         "new_words_focus: new pool exhausted; session has %s/%s units (no weak/review pad)",
                         len(selected),
                         request.session_size,
@@ -1888,7 +1894,7 @@ class SessionService:
                         for unit in selected
                         if getattr(unit, "vocabulary_id", None) == chat_vocabulary_id
                     )
-                    logger.info(
+                    logger.debug(
                         "Chat injection: inserted=%s final_chat_count=%s",
                         replaced,
                         final_chat_count,
@@ -1896,7 +1902,7 @@ class SessionService:
 
         out = selected[: request.session_size]
         if request.new_words_focus and request.study_mode == StudyModeType.PASSIVE:
-            logger.info(
+            logger.debug(
                 "new_words_debug [_sample_base_selection] new_words_focus=%s study_mode=%s "
                 "balanced_never_seen_mix=%s len(new_units_pool)=%s session_size=%s "
                 "selected_count=%s exclude_unit_ids=%s "
@@ -2035,7 +2041,7 @@ class SessionService:
                     if u.id not in seen:
                         seen.add(u.id)
                         union_units.append(u)
-            logger.info(
+            logger.debug(
                 "selection pool: pool_kind=normal bucket_entries=%d due=%d weak=%d review=%d new=%d "
                 "union_unique=%d top_sources=%s",
                 nd + nw + nr + nn,
@@ -2052,7 +2058,7 @@ class SessionService:
                     q_count = int(pool.count())
                 except Exception:
                     q_count = -1
-                logger.info(
+                logger.debug(
                     "selection pool: pool_kind=due query_mode=True due_query_count=%d "
                     "(no per-bucket breakdown)",
                     q_count,
@@ -2060,7 +2066,7 @@ class SessionService:
             else:
                 pairs = pool if isinstance(pool, list) else []
                 units = [u for u, _ in pairs]
-                logger.info(
+                logger.debug(
                     "selection pool: pool_kind=due bucket_entries=%d due=%d weak=0 review=0 new=0 "
                     "union_unique=%d top_sources=%s",
                     len(pairs),
@@ -2071,7 +2077,7 @@ class SessionService:
         elif pk == "weak":
             pairs = pool if isinstance(pool, list) else []
             units = [u for u, _ in pairs]
-            logger.info(
+            logger.debug(
                 "selection pool: pool_kind=weak bucket_entries=%d union_unique=%d top_sources=%s "
                 "(merged weak path; not split into due/weak/review/new)",
                 len(pairs),
@@ -2082,7 +2088,7 @@ class SessionService:
     def _log_selection_final(self, request: SelectionRequest, selected_units: list[LearningUnit]) -> None:
         """Diagnostic: outcome of pipeline after balancing (does not alter selection)."""
         if not selected_units:
-            logger.info("selected: total=0 unique_units=0 sources=0 pool_kind=%s", request.pool_kind)
+            logger.debug("selected: total=0 unique_units=0 sources=0 pool_kind=%s", request.pool_kind)
             return
         uid_set = {u.id for u in selected_units}
         if len(selected_units) != len(uid_set):
@@ -2105,7 +2111,7 @@ class SessionService:
                 )
         src_set = {getattr(u, "source_pdf", None) or "" for u in selected_units}
         cmin, cavg, cmax = _selection_confidence_min_avg_max(selected_units)
-        logger.info(
+        logger.debug(
             "selected: total=%d unique_units=%d sources=%d top_sources=%s "
             "confidence[min=%.2f avg=%.2f max=%.2f] pool_kind=%s",
             len(selected_units),
@@ -2123,6 +2129,30 @@ class SessionService:
         self._log_selection_pool_composition(request, pool)
         selected_units = self._sample_base_selection(request, pool)
         selected_units = self._apply_balancing_if_needed(request, pool, selected_units)
+        if request.pool_kind != "due" and not request.apply_reinforcement_only:
+            seen_selected: set[int] = set()
+            unique_selected: list[LearningUnit] = []
+            for unit in selected_units:
+                if unit.id in seen_selected:
+                    continue
+                seen_selected.add(unit.id)
+                unique_selected.append(unit)
+            selected_units = unique_selected
+            missing = request.session_size - len(selected_units)
+            if missing > 0:
+                selected_ids = {u.id for u in selected_units}
+                refill: list[LearningUnit] = []
+                if isinstance(pool, list) and pool and isinstance(pool[0], tuple):
+                    refill = self._weighted_random_sample(pool, missing, selected_ids)
+                elif isinstance(pool, dict):
+                    refill_request = replace(
+                        request,
+                        session_size=missing,
+                        exclude_unit_ids=frozenset(selected_ids),
+                    )
+                    refill = self._sample_base_selection(refill_request, pool)
+                selected_units.extend(refill)
+            selected_units = selected_units[:request.session_size]
         self._log_selection_final(request, selected_units)
         return selected_units
 
@@ -2550,6 +2580,13 @@ class SessionService:
                     follow_up_priority_ids = self._get_failed_unit_ids_from_session(
                         follow_up_session_id
                     )
+                    seen = set()
+                    unique_failed = []
+                    for unit_id in follow_up_priority_ids:
+                        if unit_id not in seen:
+                            seen.add(unit_id)
+                            unique_failed.append(unit_id)
+                    follow_up_priority_ids = unique_failed
                 else:
                     follow_up_priority_ids = self._get_ordered_unit_ids_from_session(
                         follow_up_session_id
@@ -3250,15 +3287,6 @@ class SessionService:
         )
         chat_vocab_id = chat_vocab.id if chat_vocab else None
 
-        print("---- FINAL SELECTION ----")
-
-        chat_selected = 0
-        for u in selected_units:
-            if u.vocabulary_id == chat_vocab_id:
-                chat_selected += 1
-
-        print("Chat words selected:", chat_selected)
-
         if retry_failed_only and follow_up_session_id:
             failed_unit_ids = set(follow_up_priority_ids)
             logger.info(
@@ -3586,7 +3614,10 @@ class SessionService:
         if remaining_slots > 0:
             # Adaptive readiness gate: may suppress new words and shift budget to weak/review
             from app.services.daily_stats import get_daily_dashboard_stats
-            _ds = get_daily_dashboard_stats(self.db)
+            if hasattr(self.db, "query"):
+                _ds = get_daily_dashboard_stats(self.db)
+            else:
+                _ds = {}
             new_pct, _gate_reason = _compute_new_words_readiness(
                 words_introduced_today=_ds.get("words_introduced_today", 0),
                 max_new_per_day=_ds.get("max_new_per_day", 60),
@@ -3748,26 +3779,6 @@ class SessionService:
         )
 
         candidates = query.all()
-
-        chat_vocab = (
-            self.db.query(Vocabulary)
-            .filter(
-                Vocabulary.name == "Chat Vocabulary",
-                Vocabulary.user_key == "local",
-            )
-            .first()
-        )
-        chat_vocab_id = chat_vocab.id if chat_vocab else None
-
-        print("---- NEW POOL DEBUG ----")
-        print("Total new candidates:", len(candidates))
-
-        chat_count = 0
-        for u in candidates:
-            if u.vocabulary_id == chat_vocab_id:
-                chat_count += 1
-
-        print("Chat vocab candidates:", chat_count)
 
         return [(u, self._compute_unit_weight(u, "new", now)) for u in candidates]
     
@@ -4294,8 +4305,7 @@ class SessionService:
 
         logger.info(
             "create_session_from_request inbound: new_words_focus=%s follow_up_session_id=%s "
-            "weak_only=%s due_only=%s lesson_id=%s theme=%s mode=%s "
-            "client_page_instance_id=%s client_post_seq=%s client_debug_tag=%s",
+            "weak_only=%s due_only=%s lesson_id=%s theme=%s mode=%s",
             request.new_words_focus,
             request.follow_up_session_id,
             request.weak_only,
@@ -4303,9 +4313,6 @@ class SessionService:
             request.lesson_id,
             request.theme,
             request.mode,
-            request.client_page_instance_id,
-            request.client_post_seq,
-            request.client_debug_tag,
         )
 
         mode = StudyModeType(request.mode.value)
@@ -4317,7 +4324,10 @@ class SessionService:
             ]
 
         if mode == StudyModeType.PASSIVE and not request.override_cap:
-            daily_stats = get_daily_dashboard_stats(self.db)
+            if hasattr(self.db, "query"):
+                daily_stats = get_daily_dashboard_stats(self.db)
+            else:
+                daily_stats = {}
             if daily_stats["cap_exceeded"]:
                 logger.info(
                     "create_session early return: reason=passive_intro_cap_exceeded "
@@ -4831,7 +4841,10 @@ class SessionService:
         correct = session.summary_correct_count or session.correct_count or 0
         accuracy = (correct / answered) if answered > 0 else 0.0
 
-        daily_stats = get_daily_dashboard_stats(self.db)
+        if hasattr(self.db, "query"):
+            daily_stats = get_daily_dashboard_stats(self.db)
+        else:
+            daily_stats = {}
         overdue_count = daily_stats["overdue_word_count"]
         cap_exceeded = daily_stats["cap_exceeded"]
         minimum_due_count = int(SESSION_SIZE * MINIMUM_DUE_RATIO)

@@ -896,7 +896,7 @@ def quick_add_to_inbox(
     else:
         unit_type = UnitType.WORD
 
-    _ensure_inbox_vocabulary(db, user_key=DEFAULT_USER_KEY)
+    inbox = _ensure_inbox_vocabulary(db, user_key=DEFAULT_USER_KEY)
 
     norm_text = normalize_text(text)
     norm_translation = normalize_text(translation)
@@ -910,7 +910,7 @@ def quick_add_to_inbox(
 
     if existing:
         raise HTTPException(
-            status_code=409,
+            status_code=400,
             detail={
                 "status": "exists",
                 "unit_id": existing.id,
@@ -923,8 +923,8 @@ def quick_add_to_inbox(
         text=text,
         type=unit_type,
         translation=translation,
-        source_pdf="inbox",
-        vocabulary_id=None,
+        source_pdf=INBOX_VOCAB_NAME,
+        vocabulary_id=inbox.id,
         normalized_text=norm_text,
         normalized_translation=norm_translation,
     )
@@ -943,7 +943,7 @@ def quick_add_to_inbox(
         ).first()
         if existing:
             raise HTTPException(
-                status_code=409,
+                status_code=400,
                 detail={
                     "status": "exists",
                     "unit_id": existing.id,
@@ -951,7 +951,7 @@ def quick_add_to_inbox(
                     "vocabulary_name": existing.vocabulary.name if existing.vocabulary else None,
                 },
             )
-        raise HTTPException(status_code=409, detail={"status": "exists"})
+        raise HTTPException(status_code=400, detail={"status": "exists"})
 
     logger.info(f"Quick-added to Inbox: '{text}' — '{translation}' (ID: {db_unit.id})")
     return db_unit
@@ -1001,9 +1001,20 @@ def move_unit_to_vocabulary(
 @router.get("/units/inbox")
 def get_inbox_units(db: Session = Depends(get_db)) -> list[dict]:
     """Return all units currently in the Inbox vocabulary."""
+    inbox = (
+        db.query(Vocabulary)
+        .filter(
+            Vocabulary.user_key == DEFAULT_USER_KEY,
+            Vocabulary.name == INBOX_VOCAB_NAME,
+        )
+        .first()
+    )
+    if inbox is None:
+        return []
+
     units = (
         db.query(LearningUnit)
-        .filter(LearningUnit.vocabulary_id.is_(None))
+        .filter(LearningUnit.vocabulary_id == inbox.id)
         .order_by(LearningUnit.created_at.desc())
         .all()
     )
