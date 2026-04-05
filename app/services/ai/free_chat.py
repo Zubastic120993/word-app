@@ -194,6 +194,7 @@ class FreeChatService:
         self._recently_used_words: deque[str] = deque(maxlen=6)
         self._explained_bases = set()
         self._theme_tracker = self._new_theme_tracker()
+        self._state_loaded: bool = False
 
     def _new_theme_tracker(self, theme: Optional[str] = None) -> dict:
         return {
@@ -212,6 +213,89 @@ class FreeChatService:
             "current_theme": theme,
             "checkpoint_theme_vocab": set(),
         }
+
+    def load_from_db(self, db: Session) -> None:
+        if db is None:
+            return
+        from app.models.chat_state import ChatState
+
+        state = db.query(ChatState).first()
+        if not state:
+            return  # first run, nothing to load
+
+        # conversation
+        self._conversation_history = [
+            AIMessage(role=AIRole(d["role"]), content=d["content"])
+            for d in (state.conversation_json or [])
+        ]
+
+        # sets
+        self._explained_bases = set(state.explained_bases_json or [])
+        self._user_produced_words = set(state.user_produced_json or [])
+        self._assistant_exposed_words = set(state.assistant_exposed_json or [])
+
+        # session vocab
+        self._session_vocab_list = state.session_vocab_json or []
+        if not isinstance(self._session_vocab_list, list):
+            self._session_vocab_list = []
+
+        self._session_vocab_active = bool(state.session_vocab_active)
+
+        # theme tracker (partial restore)
+        self._theme_tracker["user_messages"] = state.theme_user_messages or 0
+        self._theme_tracker["current_theme"] = state.current_theme
+        self._theme_tracker["checkpoint_done"] = bool(state.checkpoint_done)
+
+        logger.info(
+            "chat_state loaded: history=%d explained=%d covered=%d/vocab=%d vocab_active=%s",
+            len(self._conversation_history),
+            len(self._explained_bases),
+            len(self._user_produced_words | self._assistant_exposed_words),
+            len(self._session_vocab_list),
+            self._session_vocab_active,
+        )
+
+    def save_to_db(self, db: Session) -> None:
+        if db is None:
+            return
+        from app.models.chat_state import ChatState
+        from datetime import datetime
+
+        state = db.get(ChatState, 1)
+
+        if not state:
+            state = ChatState(id=1)
+            db.add(state)
+
+        # conversation
+        state.conversation_json = self.get_history()
+
+        # sets → list
+        state.explained_bases_json = list(self._explained_bases)
+        state.user_produced_json = list(self._user_produced_words)
+        state.assistant_exposed_json = list(self._assistant_exposed_words)
+
+        # session vocab
+        state.session_vocab_json = self._session_vocab_list
+        state.session_vocab_active = self._session_vocab_active
+
+        # theme tracker (partial)
+        state.theme_user_messages = self._theme_tracker["user_messages"]
+        state.current_theme = self._theme_tracker.get("current_theme")
+        state.checkpoint_done = self._theme_tracker["checkpoint_done"]
+
+        # timestamp
+        state.updated_at = datetime.utcnow()
+
+        db.commit()
+
+        logger.info(
+            "chat_state saved: history=%d explained=%d covered=%d/vocab=%d",
+            len(self._conversation_history),
+            len(self._explained_bases),
+            len(self._user_produced_words | self._assistant_exposed_words),
+            len(self._session_vocab_list),
+        )
 
     def _normalize(self, text: str) -> str:
         text = text.lower()
@@ -404,6 +488,10 @@ class FreeChatService:
 
         self._ensure_vocab_context(db)
 
+        if not self._state_loaded:
+            self.load_from_db(db)
+            self._state_loaded = True
+
         # Remember if this conversation was started with session vocab — persists for all subsequent messages
         if session_vocab:
             self._conversation_history = []
@@ -422,6 +510,9 @@ class FreeChatService:
             self._theme_tracker["checkpoint_index"] = 0
             self._theme_tracker["checkpoint_score"] = 0
             self._theme_tracker["checkpoint_questions"] = []
+            self._state_loaded = True
+            if db is not None:
+                self.save_to_db(db)
 
         self._theme_tracker["user_messages"] += 1
 
@@ -646,6 +737,7 @@ class FreeChatService:
         if len(self._conversation_history) > max_messages:
             self._conversation_history = self._conversation_history[-max_messages:]
 
+        self.save_to_db(db)
         return FreeChatResponse(
             content=response_text,
             provider=ai_response.provider,
@@ -655,7 +747,7 @@ class FreeChatService:
             progress=self._build_progress_payload(),
         )
     
-    def clear_history(self) -> None:
+    def clear_history(self, db: Session = None) -> None:
         """Clear conversation history."""
         self._conversation_history = []
         self._session_vocab_active = False
@@ -665,6 +757,16 @@ class FreeChatService:
         self._recently_used_words.clear()
         self._explained_bases.clear()
         self._theme_tracker = self._new_theme_tracker()
+
+        from app.models.chat_state import ChatState
+
+        if db is not None:
+            state = db.get(ChatState, 1)
+            if state:
+                db.delete(state)
+                db.commit()
+
+        self._state_loaded = False
     
     def get_history(self) -> list[dict]:
         """

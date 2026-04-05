@@ -12,6 +12,7 @@ from app.models.vocabulary import Vocabulary, VocabularyGroup
 from app.models.session import LearningSession, SessionUnit
 from app.models.audio import AudioAsset, SentenceAudioAsset
 from app.models.practice_event import PracticeEvent
+from app.models.chat_state import ChatState
 
 __all__ = [
     "LearningUnit",
@@ -27,4 +28,5 @@ __all__ = [
     "AudioAsset",
     "SentenceAudioAsset",
     "PracticeEvent",
+    "ChatState",
 ]

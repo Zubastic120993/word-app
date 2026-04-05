@@ -299,16 +299,16 @@ async def clear_study_history(
 
 
 @router.post("/chat/clear", response_model=ClearHistoryResponse, dependencies=[Depends(require_mac_role)])
-async def clear_chat_history() -> ClearHistoryResponse:
+async def clear_chat_history(db: Session = Depends(get_db)) -> ClearHistoryResponse:
     """
     Clear Free Chat conversation history.
-    
+
     Resets the conversation context for Free Chat.
     """
     global _free_chat_service
-    
+
     if _free_chat_service:
-        _free_chat_service.clear_history()
+        _free_chat_service.clear_history(db)
     
     return ClearHistoryResponse(
         message="Free Chat conversation history cleared.",
