@@ -1,10 +1,50 @@
-# Word App
+# Word App — Intelligent Vocabulary Trainer
 
-A local-first vocabulary learning application with AI-assisted study sessions.
+![Python](https://img.shields.io/badge/python-3.12-blue)
+![FastAPI](https://img.shields.io/badge/FastAPI-0.115-green)
+![SQLite](https://img.shields.io/badge/database-SQLite-lightgrey)
+![License](https://img.shields.io/badge/license-MIT-blue)
 
-Word App helps you learn vocabulary from PDF files through structured study sessions and conversational practice. It runs entirely on your machine and works even without AI. When enabled, AI integration is provided via Ollama (local) or OpenAI (optional).
+A local-first, AI-assisted vocabulary learning system designed for real retention, not passive memorization.
 
-Unlike typical language apps, Word App enforces a **closed-vocabulary learning model**: you only learn words that come from your own materials. AI is used as a tutor, not as a source of new vocabulary.
+Word App enforces a **closed-vocabulary learning model**: you only learn words that come from your own materials. It runs entirely on your machine, works without AI, and uses AI as a tutor rather than a source of random content.
+
+## Preview
+
+Add screenshots to:
+
+- `docs/screenshots/study.png`
+- `docs/screenshots/chat.png`
+
+Then embed them here for a visual overview of Study Mode and Free Chat.
+
+## Key Concepts
+
+- **Closed vocabulary learning** — no random words outside your own materials
+- **Recall-first mastery model** — practice is built around active retrieval
+- **AI as constrained tutor** — guidance without uncontrolled vocabulary drift
+- **Local-first architecture** — data, sessions, and backups stay on your machine
+
+## Why This Is Different
+
+Most language apps optimize for engagement.
+
+Word App optimizes for:
+
+- **Active recall over passive exposure**
+- **Strict vocabulary control**
+- **Data-driven scheduling**
+- **Full local ownership of data**
+- **AI as tutor, not content generator**
+
+## Core Learning Loop
+
+Chat -> Capture -> Study -> Reinforce -> Chat
+
+- Discover or test words in chat
+- Save useful vocabulary to your own collection
+- Practice in structured study sessions
+- Reinforce with recall-first review and scheduling
 
 ## Features
 
@@ -24,7 +64,7 @@ Unlike typical language apps, Word App enforces a **closed-vocabulary learning m
 | Validation | AI responses checked for vocabulary compliance | No validation |
 | Progress | Affects learning confidence scores | No effect on progress |
 
-**Study Mode** ensures you only encounter vocabulary you're actively learning—ideal for deliberate practice. **Free Chat** removes all restrictions for natural conversation practice.
+**Study Mode** ensures you only encounter vocabulary you're actively learning and can reinforce. **Free Chat** removes those restrictions for open-ended conversation and exploration.
 
 ## Tech Stack
 
