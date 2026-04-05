@@ -162,14 +162,14 @@ After every step:
 
 #### Step 1 — Implementation
 
-- [ ] Migration: `20260405_000001_add_chat_state.py` (`down_revision = "20260404_000001"`)
-- [ ] Model: `app/models/chat_state.py` — single-row table, `id = 1` always
-- [ ] `app/models/__init__.py` — add `ChatState` import
-- [ ] `FreeChatService`: add `_state_loaded`, `load_from_db()`, `save_to_db()`
-- [ ] `respond()`: lazy load on first call, save before `return` (not in `finally`)
-- [ ] `session_vocab` reset block: `_state_loaded = True` + `save_to_db()` immediately after clear
-- [ ] `clear_history(db)`: wipe DB row + `_state_loaded = False`
-- [ ] Router `clear_chat_history()`: add `db = Depends(get_db)`, pass to `clear_history(db)`
+- [x] Migration: `20260405_000001_add_chat_state.py` (`down_revision = "20260404_000001"`) (2026-04-06)
+- [x] Model: `app/models/chat_state.py` — single-row table, `id = 1` always (2026-04-06)
+- [x] `app/models/__init__.py` — add `ChatState` import (2026-04-06)
+- [x] `FreeChatService`: add `_state_loaded`, `load_from_db()`, `save_to_db()` (2026-04-06)
+- [x] `respond()`: lazy load on first call, save before `return` (not in `finally`) (2026-04-06)
+- [x] `session_vocab` reset block: `_state_loaded = True` + `save_to_db()` immediately after clear (2026-04-06)
+- [x] `clear_history(db)`: wipe DB row + `_state_loaded = False` (2026-04-06)
+- [x] Router `clear_chat_history()`: add `db = Depends(get_db)`, pass to `clear_history(db)` (2026-04-06)
 
 **State persisted:** conversation · explained\_bases · user\_produced · assistant\_exposed · session\_vocab\_list · session\_vocab\_active · theme\_user\_messages · current\_theme · checkpoint\_done
 
@@ -179,10 +179,12 @@ After every step:
 
 #### Step 2 — Observability (immediately after)
 
-- [ ] `load_from_db()` log: `history · explained · covered/vocab · vocab_active`
-- [ ] `save_to_db()` log: same format
+- [x] `load_from_db()` log: `history · explained · covered/vocab · vocab_active` (2026-04-06)
+- [x] `save_to_db()` log: same format (2026-04-06)
 
 #### Step 3 — Validation (2–3 days real use, no code)
+
+[~] Validation in progress — implementation complete, real usage testing ongoing (started 2026-04-06)
 
 - [ ] Restart mid-conversation → AI resumes correctly
 - [ ] Restart mid-explanation → `💡` hint not repeated for same word
