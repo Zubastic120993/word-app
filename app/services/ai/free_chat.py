@@ -1,5 +1,6 @@
 """Free Chat AI service with unrestricted conversation."""
 
+from collections import deque
 import json
 import logging
 import re
@@ -28,6 +29,9 @@ SESSION_VOCAB_TTL = 3600  # seconds
 CHECKPOINT_MESSAGE_THRESHOLD = 10
 CHECKPOINT_USAGE_THRESHOLD = 0.6
 CHECKPOINT_SIZE = 5
+PRACTICE_WORDS_LABEL = "Practice words:"
+FOCUS_LABEL = "Focus:"
+AVOID_REPEATING_LABEL = "Avoid repeating:"
 
 
 def _provider_label(provider: AIProvider) -> str:
@@ -184,9 +188,15 @@ class FreeChatService:
         self._vocab_context: list[str] = []
         self._vocab_cached_at: datetime | None = None
         self._session_vocab_active: bool = False  # set on first message with session_vocab; persists for conversation lifetime
-        self._session_vocab_list: list = []  # stored on first message; used for rotation nudge on subsequent turns
-        self._session_vocab_used: set = set()  # tracks which session vocab words have appeared in conversation
-        self._theme_tracker = {
+        self._session_vocab_list: list[dict[str, str]] = []
+        self._assistant_exposed_words: set[str] = set()
+        self._user_produced_words: set[str] = set()
+        self._recently_used_words: deque[str] = deque(maxlen=6)
+        self._explained_bases = set()
+        self._theme_tracker = self._new_theme_tracker()
+
+    def _new_theme_tracker(self, theme: Optional[str] = None) -> dict:
+        return {
             "user_messages": 0,
             "used_words": set(),
             "first_try_correct": set(),
@@ -199,9 +209,159 @@ class FreeChatService:
             "checkpoint_score": 0,
             "checkpoint_offered": False,
             "theme_vocab_total": 0,
-            "current_theme": None,
+            "current_theme": theme,
             "checkpoint_theme_vocab": set(),
         }
+
+    def _normalize(self, text: str) -> str:
+        text = text.lower()
+        text = re.sub(r"[^\w\s]", " ", text)
+        return re.sub(r"\s+", " ", text).strip()
+
+    def _guess_base_form(self, token: str) -> str:
+        if not token:
+            return token
+
+        if token.endswith("ę"):
+            return token[:-1] + "a"
+
+        if token.endswith("ów"):
+            return token[:-2]
+
+        if token.endswith("ysty"):
+            return token[:-4] + "ysta"
+
+        if token.endswith("isty"):
+            return token[:-4] + "ista"
+
+        return token
+
+    def _extract_base_explanations(self, text: str, vocab_map: dict[str, str]) -> list[str]:
+        tokens = re.findall(r"\b\w+\b", text)
+        explanations = []
+
+        for token in tokens:
+            base = self._guess_base_form(token)
+            if base != token and base in vocab_map:
+                original = vocab_map[base]
+                explanations.append(f"{token} → forma od: {original}")
+
+        return explanations
+
+    def _matches_phrase(self, phrase: str, text: str) -> bool:
+        return phrase in text
+
+    def _matches_word(self, word: str, text: str) -> bool:
+        pattern = rf"\b{re.escape(word)}\b"
+        return re.search(pattern, text) is not None
+
+    def _build_session_vocab_records(self, session_vocab: list[dict]) -> list[dict[str, str]]:
+        seen: set[str] = set()
+        normalized_items: list[dict[str, str]] = []
+
+        for item in session_vocab:
+            raw_word = str(item.get("word", "")).strip()
+            normalized = self._normalize(raw_word)
+            if not raw_word or not normalized or normalized in seen:
+                continue
+            seen.add(normalized)
+            normalized_items.append(
+                {
+                    "original": raw_word,
+                    "normalized": normalized,
+                }
+            )
+
+        return normalized_items
+
+    def _original_for_normalized(self, normalized: str) -> str:
+        for item in self._session_vocab_list:
+            if item["normalized"] == normalized:
+                return item["original"]
+        return normalized
+
+    def _build_session_control_block(self) -> str:
+        if not self._session_vocab_active or not self._session_vocab_list:
+            return ""
+
+        covered = self._assistant_exposed_words | self._user_produced_words
+        total = len(self._session_vocab_list)
+        covered_count = len(covered)
+        coverage_ratio = (covered_count / total) if total > 0 else 0.0
+
+        if coverage_ratio < 0.4:
+            focus_count = 2
+        elif coverage_ratio < 0.8:
+            focus_count = 1
+        else:
+            focus_count = 0
+
+        unused = [
+            item
+            for item in self._session_vocab_list
+            if item["normalized"] not in covered
+        ]
+        focus_items = unused[:focus_count]
+
+        recent_originals: list[str] = []
+        seen_recent: set[str] = set()
+        for normalized in self._recently_used_words:
+            if normalized in seen_recent:
+                continue
+            seen_recent.add(normalized)
+            recent_originals.append(self._original_for_normalized(normalized))
+
+        practice_words = ", ".join(item["original"] for item in self._session_vocab_list)
+        focus_words = ", ".join(item["original"] for item in focus_items) if focus_items else "none"
+        avoid_words = ", ".join(recent_originals) if recent_originals else "none"
+        if focus_count == 2:
+            instruction = "Try to naturally include one or two of these words early in the conversation."
+        elif focus_count == 1:
+            instruction = "Prefer using these words if it fits naturally, but keep the conversation smooth."
+        else:
+            instruction = "Continue the conversation naturally. Use the words only if it feels appropriate."
+
+        return (
+            f"{PRACTICE_WORDS_LABEL}\n"
+            f"{practice_words}\n\n"
+            f"{FOCUS_LABEL}\n"
+            f"{focus_words}\n\n"
+            f"{AVOID_REPEATING_LABEL}\n"
+            f"{avoid_words}\n\n"
+            f"{instruction}"
+        )
+
+    def _track_usage(self, user_text: str, ai_text: str) -> None:
+        if not self._session_vocab_active or not self._session_vocab_list:
+            return
+
+        norm_user = self._normalize(user_text)
+        norm_ai = self._normalize(ai_text)
+        user_tokens = set(norm_user.split())
+        ai_tokens = set(norm_ai.split())
+        user_base_tokens = {self._guess_base_form(token) for token in user_tokens}
+        ai_base_tokens = {self._guess_base_form(token) for token in ai_tokens}
+        used_this_turn: set[str] = set()
+
+        for item in self._session_vocab_list:
+            normalized = item["normalized"]
+            if " " in normalized:
+                user_match = self._matches_phrase(normalized, norm_user)
+                ai_match = self._matches_phrase(normalized, norm_ai)
+            else:
+                user_match = normalized in user_tokens or normalized in user_base_tokens
+                ai_match = normalized in ai_tokens or normalized in ai_base_tokens
+
+            if user_match:
+                self._user_produced_words.add(normalized)
+                used_this_turn.add(normalized)
+
+            if ai_match:
+                self._assistant_exposed_words.add(normalized)
+                used_this_turn.add(normalized)
+
+        for normalized in used_this_turn:
+            self._recently_used_words.append(normalized)
     
     def _ensure_vocab_context(self, db: Session) -> None:
         now = utc_now()
@@ -240,31 +400,20 @@ class FreeChatService:
         correction_already_handled = False
 
         if theme != self._theme_tracker.get("current_theme"):
-            self._theme_tracker = {
-                "user_messages": 0,
-                "used_words": set(),
-                "first_try_correct": set(),
-                "corrected_words": set(),
-                "checkpoint_eligible": False,
-                "checkpoint_active": False,
-                "checkpoint_done": False,
-                "checkpoint_questions": [],
-                "checkpoint_index": 0,
-                "checkpoint_score": 0,
-                "checkpoint_offered": False,
-                "theme_vocab_total": 0,
-                "current_theme": theme,
-                "checkpoint_theme_vocab": set(),
-            }
+            self._theme_tracker = self._new_theme_tracker(theme)
 
         self._ensure_vocab_context(db)
 
-        self._theme_tracker["user_messages"] += 1
-
         # Remember if this conversation was started with session vocab — persists for all subsequent messages
         if session_vocab:
+            self._conversation_history = []
+            self._assistant_exposed_words.clear()
+            self._user_produced_words.clear()
+            self._recently_used_words.clear()
+            self._explained_bases.clear()
             self._session_vocab_active = True
-            self._session_vocab_list = session_vocab
+            self._session_vocab_list = self._build_session_vocab_records(session_vocab)
+            self._theme_tracker = self._new_theme_tracker(theme)
             # Reset any in-progress checkpoint state from a previous conversation
             self._theme_tracker["checkpoint_active"] = False
             self._theme_tracker["checkpoint_eligible"] = False
@@ -273,6 +422,8 @@ class FreeChatService:
             self._theme_tracker["checkpoint_index"] = 0
             self._theme_tracker["checkpoint_score"] = 0
             self._theme_tracker["checkpoint_questions"] = []
+
+        self._theme_tracker["user_messages"] += 1
 
         # Checkpoint logic is theme-based — skip entirely when session_vocab is active
         if not self._session_vocab_active:
@@ -359,25 +510,27 @@ class FreeChatService:
         # When absent, fall back to _vocab_context (theme/general bias).
         vocab_bias = None if self._session_vocab_active else self._vocab_context
 
-        # Save raw user message before any tip injection — grammar correction must use the original text.
         raw_user_message = user_message
-
-        # Rotation nudge: every 2nd turn when session vocab is active, hint at the next word in the list
-        if self._session_vocab_active and self._session_vocab_list:
-            turn = self._theme_tracker["user_messages"]
-            if turn % 2 == 0:
-                hint_word = self._session_vocab_list[turn % len(self._session_vocab_list)]["word"]
-                user_message = user_message + f"\n\n[Practice tip: if it fits naturally, try using '{hint_word}']"
+        control_block = self._build_session_control_block()
 
         # Get system prompt
         base_prompt = get_free_chat_system_prompt()
+        base_prompt += (
+            "\n\nLanguage guidance:\n"
+            "- Prefer simpler, more common wording and constructions when possible.\n"
+            "- Avoid unnecessarily complex or advanced grammatical forms.\n"
+            "- Keep sentences natural and correct in Polish.\n"
+            "- Slightly prioritize clarity over stylistic richness.\n"
+        )
+        if control_block:
+            base_prompt = f"{control_block}\n\n{base_prompt}"
         system_prompt = build_system_prompt(
             base_prompt,
             scenario=scenario,
             vocabulary_bias=vocab_bias,
             correction_mode=corrections_enabled,
             mode="practice",
-            session_vocab=session_vocab or [],
+            session_vocab=None,
         )
         
         estimated = estimate_token_count(system_prompt)
@@ -459,9 +612,30 @@ class FreeChatService:
             )
             self._theme_tracker["checkpoint_offered"] = True
 
+        assistant_text_for_tracking = response_text
+        self._track_usage(raw_user_message, assistant_text_for_tracking)
+
+        if self._session_vocab_active and self._session_vocab_list:
+            normalized_user_text = self._normalize(raw_user_message)
+            vocab_map = {
+                item["normalized"]: item["original"]
+                for item in self._session_vocab_list
+            }
+            explanations = self._extract_base_explanations(normalized_user_text, vocab_map)
+            filtered_explanations = []
+            for exp in explanations:
+                base = exp.split("forma od: ")[-1]
+                if base not in self._explained_bases:
+                    filtered_explanations.append(exp)
+            if filtered_explanations:
+                explanation = filtered_explanations[0]
+                base = explanation.split("forma od: ")[-1]
+                self._explained_bases.add(base)
+                response_text += f"\n\n💡 {explanation}"
+
         # Update conversation history
         self._conversation_history.append(
-            AIMessage(role=AIRole.USER, content=user_message)
+            AIMessage(role=AIRole.USER, content=raw_user_message)
         )
         self._conversation_history.append(
             AIMessage(role=AIRole.ASSISTANT, content=response_text)
@@ -471,14 +645,6 @@ class FreeChatService:
         max_messages = MAX_HISTORY_TURNS * 2
         if len(self._conversation_history) > max_messages:
             self._conversation_history = self._conversation_history[-max_messages:]
-
-        # Track session vocab usage — scan both user message and AI reply
-        if self._session_vocab_active and self._session_vocab_list:
-            clean_user = user_message.split("[Practice tip:")[0].lower()
-            for item in self._session_vocab_list:
-                word = item.get("word", "").lower()
-                if word and word in clean_user:
-                    self._session_vocab_used.add(word)
 
         return FreeChatResponse(
             content=response_text,
@@ -492,22 +658,13 @@ class FreeChatService:
     def clear_history(self) -> None:
         """Clear conversation history."""
         self._conversation_history = []
-        self._theme_tracker = {
-            "user_messages": 0,
-            "used_words": set(),
-            "first_try_correct": set(),
-            "corrected_words": set(),
-            "checkpoint_eligible": False,
-            "checkpoint_active": False,
-            "checkpoint_done": False,
-            "checkpoint_questions": [],
-            "checkpoint_index": 0,
-            "checkpoint_score": 0,
-            "checkpoint_offered": False,
-            "theme_vocab_total": 0,
-            "current_theme": None,
-            "checkpoint_theme_vocab": set(),
-        }
+        self._session_vocab_active = False
+        self._session_vocab_list = []
+        self._assistant_exposed_words.clear()
+        self._user_produced_words.clear()
+        self._recently_used_words.clear()
+        self._explained_bases.clear()
+        self._theme_tracker = self._new_theme_tracker()
     
     def get_history(self) -> list[dict]:
         """
@@ -715,6 +872,7 @@ USER ATTEMPT:
         )
 
     def _build_progress_payload(self) -> dict:
+        covered = self._assistant_exposed_words | self._user_produced_words
         return {
             "theme_used": len(self._theme_tracker["used_words"]),
             "theme_total": self._theme_tracker.get("theme_vocab_total", 0),
@@ -723,9 +881,15 @@ USER ATTEMPT:
             "checkpoint_active": self._theme_tracker["checkpoint_active"],
             "checkpoint_score": self._theme_tracker["checkpoint_score"],
             "checkpoint_index": self._theme_tracker["checkpoint_index"],
-            "session_vocab_used": len(self._session_vocab_used),
+            "assistant_exposed_count": len(self._assistant_exposed_words),
+            "user_produced_count": len(self._user_produced_words),
+            "covered_count": len(covered),
+            "session_vocab_used": len(covered),
             "session_vocab_total": len(self._session_vocab_list),
-            "session_vocab_used_words": list(self._session_vocab_used),
+            "session_vocab_used_words": [
+                self._original_for_normalized(word)
+                for word in covered
+            ],
         }
 
     def _normalize_text(self, text: str) -> str:

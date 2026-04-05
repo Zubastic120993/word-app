@@ -1,6 +1,7 @@
 """API router for PDF upload and learning unit management."""
 
 import logging
+import re
 import tempfile
 from pathlib import Path
 from typing import Optional
@@ -43,6 +44,34 @@ router = APIRouter(
 DEFAULT_USER_KEY = "local"
 USER_VOCAB_NAME = "Chat Vocabulary"
 INBOX_VOCAB_NAME = "Inbox"
+
+
+def guess_base_form(text: str) -> str:
+    word = text.strip()
+
+    if not word:
+        return text
+
+    if " " in word:
+        return text
+
+    if not re.fullmatch(r"[A-Za-ząćęłńóśźżĄĆĘŁŃÓŚŹŻ]+", word):
+        return text
+
+    if len(word) < 4:
+        return text
+
+    w = word.lower()
+
+    # High-confidence noun heuristics only.
+    if w.endswith("ę"):
+        return word[:-1] + "a"
+
+    if w.endswith("ów") and len(w) > 5:
+        return word[:-2]
+
+    return text
+
 
 class CreateUnitRequest(BaseModel):
     text: str
@@ -885,6 +914,10 @@ def quick_add_to_inbox(
     """
     text = payload.text.strip()
     translation = payload.translation.strip()
+    suggested_base = guess_base_form(text)
+
+    if suggested_base != text:
+        logger.info("base form suggestion: %s -> %s", text, suggested_base)
 
     if not text or not translation:
         raise HTTPException(status_code=400, detail="Both text and translation are required.")

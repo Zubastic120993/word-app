@@ -267,6 +267,34 @@ function normalizeToken(t) {
     return t.normalize("NFC").toLowerCase().trim();
 }
 
+const STOP_WORDS = new Set([
+    "że", "co", "i", "w", "na", "to", "jest", "być", "ma", "się",
+    "o", "z", "do", "a", "czy", "jak", "ale", "bo", "ten", "ta", "te",
+    "jestem", "jesteś", "są", "było", "była", "byli", "mój", "twoj", "jego"
+]);
+
+function guessBaseForm(token) {
+    if (!token) return token;
+
+    if (token.endsWith("ę")) {
+        return token.slice(0, -1) + "a";
+    }
+
+    if (token.endsWith("ów")) {
+        return token.slice(0, -2);
+    }
+
+    if (token.endsWith("ysty")) {
+        return token.slice(0, -4) + "ysta";
+    }
+
+    if (token.endsWith("isty")) {
+        return token.slice(0, -4) + "ista";
+    }
+
+    return token;
+}
+
 async function loadKnownTokens() {
     try {
         const data = await fetch("/api/vocabulary/known-tokens").then(r => r.json());
@@ -315,10 +343,13 @@ function annotateUnknownWords(contentEl) {
             }
 
             const normalized = normalizeToken(token);
+            const base = guessBaseForm(normalized);
             if (
                 token.length >= 3 &&
                 !/^\d+$/.test(token) &&
-                !knownTokens.has(normalized)
+                !STOP_WORDS.has(normalized) &&
+                !knownTokens.has(normalized) &&
+                !knownTokens.has(base)
             ) {
                 if (DEBUG_WORD_CAPTURE) console.log("Unknown word:", token);
                 const span = document.createElement('span');
